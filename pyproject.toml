@@ -1,0 +1,30 @@
+[project]
+name = "pat-okf-agent"
+version = "0.2.0"
+description = "EPO/USPTO patent data access + OKF v0.2 Markdown knowledge base"
+readme = "README.md"
+authors = [{name = "Chottokun"}]
+requires-python = ">=3.12"
+dependencies = []  # stdlib-only by design
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
+
+[project.scripts]
+epo = "pat_okf_agent.epo:main"
+uspto = "pat_okf_agent.uspto:main"
+okf = "pat_okf_agent.wiki.cli:main"
+okf-mcp = "pat_okf_agent.wiki.mcp_server:main"
+
+[project.urls]
+Repository = "https://github.com/chottokun/pat-okf-agent"
+
+[build-system]
+requires = ["uv_build>=0.13.3,<0.14"]
+build-backend = "uv_build"
+
+[tool.uv]
+python-downloads = "never"

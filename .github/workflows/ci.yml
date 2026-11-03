@@ -1,0 +1,65 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.13.3"
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --locked
+
+      - name: Unit tests
+        run: >-
+          uv run python -W error::ResourceWarning
+          -m unittest discover -s tests -q
+
+      - name: Demo wiki validation
+        run: |
+          uv run okf validate examples/wiki
+          uv run okf index examples/wiki --check
+
+      - name: Skill discovery
+        run: uv run okf skills . --skills-dir .agents/skills --check --json
+
+      - name: Compile
+        run: uv run python -m compileall -q src tests scripts
+
+      - name: Release smoke
+        run: uv run python scripts/release_smoke.py
+
+      - name: Build distribution
+        run: uv build --out-dir "$RUNNER_TEMP/okf-dist"
+
+      - name: Check distribution contents
+        run: uv run python scripts/check_dist.py "$RUNNER_TEMP/okf-dist"
+
+      - name: Public release guard
+        run: uv run python scripts/check_public_repo.py

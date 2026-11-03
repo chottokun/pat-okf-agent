@@ -1,0 +1,9 @@
+# Normalize line endings: repo uses LF for text sources
+* text=auto
+*.py text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.lock text eol=lf
+*.xml text eol=lf
+*.txt text eol=lf

@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE us-patent-grant SYSTEM "us-patent-grant-v45-2014-04-03.dtd" [
+]>
+<us-patent-grant lang="EN" dtd-version="v4.5 2014-04-03" file="US12345678-20240102.XML" status="PRODUCTION" id="US12345678-20240102" country="US" date-produced="20240102" date-publ="20240102">
+  <us-bibliographic-data-grant>
+    <publication-reference>
+      <document-id>
+        <country>US</country>
+        <doc-number>12345678</doc-number>
+        <kind>B2</kind>
+        <date>20240102</date>
+      </document-id>
+    </publication-reference>
+    <invention-title id="eng">SAMPLE COMPOSITION AND METHOD OF MAKING THE SAME</invention-title>
+    <parties>
+      <inventors>
+        <inventor sequence="1">
+          <addressbook>
+            <last-name>Doe</last-name>
+            <first-name>Jane</first-name>
+          </addressbook>
+        </inventor>
+        <inventor sequence="2">
+          <addressbook>
+            <last-name>Smith</last-name>
+            <first-name>John</first-name>
+          </addressbook>
+        </inventor>
+      </inventors>
+      <assignees>
+        <assignee>
+          <addressbook>
+            <orgname>ACME CORPORATION</orgname>
+          </addressbook>
+        </assignee>
+      </assignees>
+    </parties>
+  </us-bibliographic-data-grant>
+  <abstract id="abstract">
+    <p>A composition comprising an amorphous alloy and a binder.</p>
+  </abstract>
+  <description id="description">
+    <p>Field of the invention.</p>
+  </description>
+  <claims id="claims">
+    <claim id="CLM-00001">
+      <claim-text>1. A composition comprising an amorphous alloy and a binder.</claim-text>
+    </claim>
+    <claim id="CLM-00002">
+      <claim-text>2. The composition of claim 1, wherein the binder is organic.</claim-text>
+    </claim>
+  </claims>
+</us-patent-grant>

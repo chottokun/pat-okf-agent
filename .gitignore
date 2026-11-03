@@ -1,0 +1,33 @@
+# Secrets — never commit real credentials or tokens
+.secrets/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Fetched raw data and local databases/models
+data/external/
+*.sqlite
+*.sqlite3
+*.db
+*.onnx
+*.pt
+*.pth
+*.bin
+
+# Python / uv
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+dist/
+
+# Derived Pattern B SQLite index
+.okf/
+
+# Local implementation plans (not published to public repository)
+plan/
