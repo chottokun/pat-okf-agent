@@ -229,6 +229,27 @@ class RateLimiterStateTests(unittest.TestCase):
         self.assertEqual(sleeps, [])
         self.assertEqual(self.state.read_text().strip(), "1000.000000")
 
+    def test_wait_state_oserror_falls_back_to_in_process_rate_limit(self):
+        sleeps: list[float] = []
+        clock = [1000.0]
+        # Make a file where a directory is expected, causing mkdir to raise OSError
+        barrier = Path(self.tmp.name) / "cannot_create_dir"
+        barrier.write_text("blocking file")
+        unusable_path = barrier / "rate_state.json"
+
+        limiter = RateLimiter(
+            3.0,
+            clock=lambda: clock[0],
+            sleeper=sleeps.append,
+            state_path=unusable_path,
+            wall=lambda: clock[0],
+        )
+        limiter.wait()  # first call sets _last to 1000.0
+        self.assertEqual(sleeps, [])
+        clock[0] = 1001.0
+        limiter.wait()  # second call at 1001.0 falls back to in-process wait: sleeps 2.0s
+        self.assertEqual(sleeps, [2.0])
+
 
 class OpsClientTests(unittest.TestCase):
     def setUp(self):
@@ -351,6 +372,60 @@ class OpsClientTests(unittest.TestCase):
         self.assertFalse((self.cache / "biblio_EP_9999999_A1.json").exists())
         self.assertTrue((self.cache / "biblio_EP_9999999_A1.error.txt").exists())
 
+    def test_dynamic_cache_staleness_warning_over_24h(self):
+        import os
+        import sys
+        import time
+
+        client = self._client([
+            (TOKEN_URL, _token_response()),
+            ("/published-data/search", _search_response),
+            ("/published-data/publication/docdb/EP.9999999.A1/biblio", _biblio_response),
+        ])
+        client.search("ta=metal")
+        search_files = list(self.cache.glob("search_*.json"))
+        self.assertTrue(search_files)
+        search_file = search_files[0]
+
+        # Artificially age the cache file to 25 hours ago
+        stale_time = time.time() - (25 * 3600)
+        os.utime(search_file, (stale_time, stale_time))
+
+        stderr_buf = io.StringIO()
+        old_stderr = sys.stderr
+        sys.stderr = stderr_buf
+        try:
+            client.search("ta=metal")
+        finally:
+            sys.stderr = old_stderr
+
+        warning = stderr_buf.getvalue()
+        self.assertIn("older than 24 hours", warning)
+        self.assertIn("--refresh", warning)
+
+        # Fresh cache (< 24h) emits no warning
+        os.utime(search_file, (time.time(), time.time()))
+        stderr_buf = io.StringIO()
+        sys.stderr = stderr_buf
+        try:
+            client.search("ta=metal")
+        finally:
+            sys.stderr = old_stderr
+        self.assertEqual(stderr_buf.getvalue(), "")
+
+        # Static endpoint (biblio) emits no warning even when > 24h
+        client.biblio("EP9999999A1")
+        biblio_files = list(self.cache.glob("biblio_*.json"))
+        self.assertTrue(biblio_files)
+        os.utime(biblio_files[0], (stale_time, stale_time))
+        stderr_buf = io.StringIO()
+        sys.stderr = stderr_buf
+        try:
+            client.biblio("EP9999999A1")
+        finally:
+            sys.stderr = old_stderr
+        self.assertEqual(stderr_buf.getvalue(), "")
+
 
 class ParsingTests(unittest.TestCase):
     def test_normalize_docdb(self):
@@ -429,6 +504,29 @@ class EpsClientTests(unittest.TestCase):
         with self.assertRaises(EpoApiError):
             parse_eps_claims("<not-xml")
 
+    def test_eps_exists_404_and_500(self):
+        transport_404 = FakeTransport([
+            ("/patents/EP9999999NWB1/document.xml", lambda: (_ for _ in ()).throw(
+                urllib.error.HTTPError(
+                    "https://data.epo.org", 404, "Not Found", {},
+                    io.BytesIO(b"<fault>missing</fault>")))),
+        ])
+        eps_404 = EpsClient(cache_dir=self.cache, sleep_s=0, transports=transport_404,
+                            sleeper=lambda _s: None)
+        self.assertFalse(eps_404.exists("EP9999999", kind="B1"))
+
+        transport_500 = FakeTransport([
+            ("/patents/EP9999999NWB1/document.xml", lambda: (_ for _ in ()).throw(
+                urllib.error.HTTPError(
+                    "https://data.epo.org", 500, "Internal Server Error", {},
+                    io.BytesIO(b"<fault>server error</fault>")))),
+        ])
+        eps_500 = EpsClient(cache_dir=self.cache, sleep_s=0, transports=transport_500,
+                            sleeper=lambda _s: None)
+        with self.assertRaises(EpoApiError) as ctx:
+            eps_500.exists("EP9999999", kind="B1")
+        self.assertEqual(ctx.exception.status, 500)
+
 
 class CredentialTests(unittest.TestCase):
     def test_env_credentials_without_file(self):
@@ -449,6 +547,32 @@ class CredentialTests(unittest.TestCase):
         creds = OpsCredentials.load(path=path, environ={})
         self.assertEqual(creds.token_urls[0], "https://ops.epo.org/3.2/auth/accesstoken")
         self.assertEqual(creds.source, str(path))
+
+
+class CliAndRootTests(unittest.TestCase):
+    def test_root_is_cwd_not_repo_parent(self):
+        from pat_okf_agent import epo
+        self.assertEqual(epo.ROOT, Path.cwd())
+
+    def test_cli_error_outputs_to_stderr(self):
+        import io
+        import sys
+        from pat_okf_agent.epo import main
+
+        stderr_buf = io.StringIO()
+        stdout_buf = io.StringIO()
+        old_stderr = sys.stderr
+        old_stdout = sys.stdout
+        sys.stderr = stderr_buf
+        sys.stdout = stdout_buf
+        try:
+            code = main(["--credentials", "/nonexistent/credentials.json", "search", "ta=metal"])
+        finally:
+            sys.stderr = old_stderr
+            sys.stdout = old_stdout
+        self.assertEqual(code, 2)
+        self.assertIn("error:", stderr_buf.getvalue())
+        self.assertEqual(stdout_buf.getvalue(), "")
 
 
 if __name__ == "__main__":
