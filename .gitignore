@@ -31,3 +31,6 @@ dist/
 
 # Local implementation plans (not published to public repository)
 plan/
+
+# Local agent work products (KB builds and run logs, not published)
+.kb-*
