@@ -93,7 +93,8 @@ def ingest_publication(
     }
     node_rel = f"patents/{compact}.md"
     write_concept(wiki / node_rel,
-                  _patent_meta(compact, biblio, timestamp),
+                  _patent_meta(compact, biblio, timestamp,
+                               claims_source=claims_source),
                   _patent_body(compact, biblio, claims, members,
                                include_claims=include_claims,
                                include_family=include_family,
@@ -138,11 +139,17 @@ def ingest_query(
 # -- document rendering -----------------------------------------------------
 
 def _patent_meta(compact: str, biblio: dict[str, Any],
-                 timestamp: str) -> dict[str, Any]:
+                 timestamp: str,
+                 claims_source: str | None = None) -> dict[str, Any]:
     title = str(biblio.get("title") or "").strip() or compact
     applicants = _names(biblio.get("applicants"))
     country = str(biblio.get("country") or compact[:2]).lower()
     tags = _dedupe(["epo", "patent", country])
+    sources = [f"patent-biblio:{compact} via=epo-ops"]
+    if claims_source == "EPO OPS":
+        sources.append(f"patent-claims:{compact} via=epo-ops")
+    elif claims_source == "EPO EPS":
+        sources.append(f"patent-claims:{compact} via=epo-eps")
     meta: dict[str, Any] = {
         "type": "Patent",
         "title": title,
@@ -151,8 +158,10 @@ def _patent_meta(compact: str, biblio: dict[str, Any],
         "tags": tags,
         "timestamp": timestamp,
         "scope": "taxonomy",
-        "source": "EPO OPS",
         "publication": compact,
+        "basis": "external",
+        "sources": sources,
+        "verified_at": timestamp[:10],
     }
     if applicants:
         meta["applicants"] = applicants
@@ -226,8 +235,9 @@ def _stub_meta(compact: str, parent: str, timestamp: str) -> dict[str, Any]:
         "tags": _dedupe(["epo", "patent", compact[:2].lower(), "stub"]),
         "timestamp": timestamp,
         "scope": "taxonomy",
-        "source": "EPO OPS",
         "publication": compact,
+        "basis": "external",
+        "sources": [f"patent-family:{parent}"],
     }
 
 

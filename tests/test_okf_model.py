@@ -12,12 +12,17 @@ from pat_okf_agent.wiki.frontmatter import (
     parse_frontmatter,
 )
 from pat_okf_agent.wiki.model import (
+    BASIS_VALUES,
+    KNOWN_SOURCE_KINDS,
     SCOPE_WEIGHTS,
     Concept,
+    SourceEntry,
     extract_links,
     extract_sections,
+    is_transparent_heading,
     iter_concepts,
     load_concept,
+    parse_source_entry,
     relevance,
     scope_from_heading,
     scope_of,
@@ -97,6 +102,22 @@ class FrontmatterTests(unittest.TestCase):
         parsed, body = parse_frontmatter(text)
         self.assertEqual(parsed, meta)
         self.assertEqual(body, "Body\n")
+
+    def test_dump_frontmatter_orders_provenance_keys(self):
+        meta = {
+            "verified_at": "2026-11-07",
+            "basis": "mixed",
+            "sources": ["patent-biblio:EP9999999B1"],
+            "title": "AlN",
+            "type": "Concept",
+        }
+        text = dump_frontmatter(meta)
+        lines = [
+            line.split(":")[0].strip()
+            for line in text.strip().splitlines()
+            if not line.startswith(" ") and line.strip() not in ("---", "...")
+        ]
+        self.assertEqual(lines, ["type", "title", "basis", "sources", "verified_at"])
 
     def test_dump_frontmatter_is_deterministic(self):
         text = dump_frontmatter({"tags": ["b", "a"], "type": "Note",
@@ -285,6 +306,137 @@ class ConceptTests(unittest.TestCase):
                     body="", links=[]),
             Concept,
         )
+
+    def test_parse_source_entry_valid_and_invalid(self):
+        # valid minimal
+        entry = parse_source_entry("patent-biblio:CN122301579A")
+        self.assertEqual(entry.kind, "patent-biblio")
+        self.assertEqual(entry.id, "CN122301579A")
+        self.assertEqual(entry.attrs, {})
+        self.assertEqual(entry.raw, "patent-biblio:CN122301579A")
+
+        # valid with URL, colons in id, and all attributes
+        full = ("datasheet:https://example.com/a:b.pdf "
+                "issued=2024-05-01 retrieved=2026-11-07 via=web")
+        entry2 = parse_source_entry(full)
+        self.assertEqual(entry2.kind, "datasheet")
+        self.assertEqual(entry2.id, "https://example.com/a:b.pdf")
+        self.assertEqual(entry2.attrs, {
+            "issued": "2024-05-01",
+            "retrieved": "2026-11-07",
+            "via": "web",
+        })
+
+        # invalid cases
+        invalids = [
+            "",
+            "   ",
+            123,
+            "no-colon-entry",
+            ":missing-kind",
+            "missing-id:",
+            "paper:id foo=bar",  # unknown attribute
+            "paper:id issued=2026-02-30",  # invalid date (Feb 30)
+            "paper:id issued=20261107",  # no hyphens
+            "paper:id retrieved=2026-13-01",  # month 13
+            "paper:id via=",  # empty value
+            "paper:id no-equals",  # not key=value
+            "paper:id via=a via=b",  # duplicate key
+        ]
+        for bad in invalids:
+            with self.subTest(bad=bad):
+                with self.assertRaises(ValueError):
+                    parse_source_entry(bad)  # type: ignore[arg-type]
+
+    def test_validate_meta_provenance_fields(self):
+        # valid basis values
+        for b in ("external", "model", "mixed"):
+            self.assertEqual(validate_meta({"type": "Note", "basis": b}), [])
+        # invalid basis
+        self.assertTrue(validate_meta({"type": "Note", "basis": "unknown"}))
+        self.assertTrue(validate_meta({"type": "Note", "basis": 123}))
+
+        # valid sources
+        self.assertEqual(validate_meta({
+            "type": "Note",
+            "sources": ["patent-biblio:EP1", "datasheet:https://ex.com retrieved=2026-11-07 via=web"],
+        }), [])
+        # unknown kind does NOT fail in validate_meta (warning in P7)
+        self.assertEqual(validate_meta({
+            "type": "Note",
+            "sources": ["unknown-kind:xyz123 via=somewhere"],
+        }), [])
+        # invalid sources
+        self.assertTrue(validate_meta({"type": "Note", "sources": "not-a-list"}))
+        self.assertTrue(validate_meta({"type": "Note", "sources": [123]}))
+        self.assertTrue(validate_meta({"type": "Note", "sources": ["bad entry no colon"]}))
+        self.assertTrue(validate_meta({"type": "Note", "sources": ["paper:id issued=not-a-date"]}))
+
+        # valid verified_at
+        self.assertEqual(validate_meta({"type": "Note", "verified_at": "2026-11-07"}), [])
+        # invalid verified_at
+        self.assertTrue(validate_meta({"type": "Note", "verified_at": "2026-02-30"}))
+        self.assertTrue(validate_meta({"type": "Note", "verified_at": "20261107"}))
+        self.assertTrue(validate_meta({"type": "Note", "verified_at": 20261107}))
+
+    def test_concept_provenance_properties_and_as_dict(self):
+        meta = {
+            "type": "Note",
+            "basis": "mixed",
+            "sources": ["patent-biblio:EP1"],
+            "verified_at": "2026-11-07",
+        }
+        concept = Concept(path=Path("a.md"), rel="a.md", meta=meta, body="", links=[])
+        self.assertEqual(concept.basis, "mixed")
+        self.assertEqual(concept.sources, ["patent-biblio:EP1"])
+        self.assertEqual(concept.verified_at, "2026-11-07")
+
+        d = concept.as_dict()
+        self.assertEqual(d["basis"], "mixed")
+        self.assertEqual(d["sources"], ["patent-biblio:EP1"])
+        self.assertEqual(d["verified_at"], "2026-11-07")
+
+        # default when absent
+        c_empty = Concept(path=Path("b.md"), rel="b.md", meta={"type": "Note"}, body="", links=[])
+        self.assertIsNone(c_empty.basis)
+        self.assertEqual(c_empty.sources, [])
+        self.assertIsNone(c_empty.verified_at)
+        d_empty = c_empty.as_dict()
+        self.assertIsNone(d_empty["basis"])
+        self.assertEqual(d_empty["sources"], [])
+        self.assertIsNone(d_empty["verified_at"])
+
+    def test_extract_links_transparent_headings_keep_parent_heading(self):
+        body = (
+            "## Workflow / Implementation\n"
+            "intro\n"
+            "### 出典に基づく整理\n"
+            "[link1](a.md)\n"
+            "### 一般知識（未検証）\n"
+            "[link2](b.md)\n"
+            "### General Knowledge (Unverified)\n"
+            "[link3](c.md)\n"
+            "### Based on Sources\n"
+            "[link4](d.md)\n"
+            "## Gotchas / Anti-Pitfalls\n"
+            "[link5](e.md)\n"
+        )
+        links = extract_links(body, "x.md")
+        self.assertEqual(
+            [link.heading for link in links],
+            [
+                "Workflow / Implementation",
+                "Workflow / Implementation",
+                "Workflow / Implementation",
+                "Workflow / Implementation",
+                "Gotchas / Anti-Pitfalls",
+            ],
+        )
+        self.assertEqual(
+            [link.section_scope for link in links],
+            ["workflow", "workflow", "workflow", "workflow", "gotchas"],
+        )
+
 
 
 if __name__ == "__main__":

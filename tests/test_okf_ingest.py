@@ -98,6 +98,13 @@ class IngestTests(unittest.TestCase):
         self.assertEqual(meta["scope"], "taxonomy")
         self.assertIn("epo", meta["tags"])
         self.assertIn("ep", meta["tags"])
+        self.assertEqual(meta["basis"], "external")
+        self.assertEqual(meta["sources"], [
+            "patent-biblio:EP9999999B1 via=epo-ops",
+            "patent-claims:EP9999999B1 via=epo-ops",
+        ])
+        self.assertEqual(meta["verified_at"], "2026-10-29")
+        self.assertNotIn("source", meta)
         self.assertIn("## Bibliographic", body)
         self.assertIn("EXAMPLE CORP", body)
         self.assertIn("## Claims", body)
@@ -116,6 +123,10 @@ class IngestTests(unittest.TestCase):
         self.assertEqual(meta["type"], "Patent")
         self.assertIn("stub", meta["tags"])
         self.assertIn("Family member", meta["description"])
+        self.assertEqual(meta["basis"], "external")
+        self.assertEqual(meta["sources"], ["patent-family:EP9999999B1"])
+        self.assertNotIn("verified_at", meta)
+        self.assertNotIn("source", meta)
         self.assertIn("[EP9999999B1](EP9999999B1.md)", body)
         self.assertIn(stub_rel, summary["stubs"])
 
@@ -143,6 +154,7 @@ class IngestTests(unittest.TestCase):
                                      now=NOW)
         meta, body = self.read("patents/EP9999999B1.md")
         self.assertEqual(meta["type"], "Patent")
+        self.assertEqual(meta["sources"], ["patent-biblio:EP9999999B1 via=epo-ops"])
         self.assertIn("Claims not available", body)
         self.assertTrue(summary["warnings"])
 
@@ -152,8 +164,9 @@ class IngestTests(unittest.TestCase):
 
         summary = ingest_publication(client, "EP9999999B1", self.root,
                                      eps_client=eps, now=NOW)
-        _, body = self.read("patents/EP9999999B1.md")
+        meta, body = self.read("patents/EP9999999B1.md")
         self.assertIn("An EPS claim.", body)
+        self.assertIn("patent-claims:EP9999999B1 via=epo-eps", meta["sources"])
         self.assertEqual(summary["claims_source"], "EPO EPS")
         self.assertEqual(summary["claims"], 1)
         self.assertFalse(summary["warnings"])

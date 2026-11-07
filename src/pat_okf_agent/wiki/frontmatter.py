@@ -25,7 +25,7 @@ _EMPTY = object()
 
 _KEY_ORDER = (
     "type", "title", "description", "resource", "tags", "timestamp",
-    "scope", "source", "publication",
+    "scope", "publication", "basis", "sources", "verified_at",
 )
 
 

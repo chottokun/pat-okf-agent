@@ -98,8 +98,84 @@ resource: https://...        # 推奨（原典 URL）
 tags: [epo, patent, ep]      # 推奨（文字列のリスト）
 timestamp: 2026-10-29T00:00:00Z
 scope: taxonomy              # taxonomy | workflow | synergistic | gotchas
+publication: EP9999999B1     # 任意（公報番号の直接参照）
+basis: external              # 任意（推奨）: external | model | mixed
+sources:                     # 任意: 出典リスト
+  - "patent-biblio:EP9999999B1 via=epo-ops"
+  - "patent-claims:EP9999999B1 via=epo-ops"
+verified_at: "2026-10-29"    # 任意: 照合確認日（YYYY-MM-DD）
 ---
 ```
+
+### プロベナンス（出典・検証状態）仕様
+
+- **`basis`**: ノート記述内容の派生元を表す認識論的フラグ。
+  - `external`: 外部出典のみで裏付けられている（stub を除く全ノートで `sources` または external ノードへの相対リンク、および `verified_at` が必要）。
+  - `model`: LLM の一般知識のみで書かれている。
+  - `mixed`: 外部出典とモデルの一般知識が混在している（`sources` または external ノードへの相対リンクが必要）。
+- **`sources`**: 出典文字列のリスト。
+  - 文法: `<kind>:<id>[ issued=YYYY-MM-DD][ retrieved=YYYY-MM-DD][ via=<channel>]`（空白区切り）
+  - 属性キー: `issued`（発行日）、`retrieved`（取得日）、`via`（取得経路。例: `epo-ops`, `epo-eps`）
+  - `kind` 語彙（13種）と陳腐化プロファイル:
+    - 不変層: `patent-biblio`（特許書誌）, `patent-claims`（特許クレーム）, `paper`（査読論文）, `standard`（標準・規格）
+    - 版管理層: `datasheet`（データシート）, `product-page`（製品ページ）, `patent-legal`（法的状態）
+    - 揮発層（3年経過で P8 警告）: `press-release`（プレスリリース）, `news`（報道記事）, `preprint`（プレプリント）
+    - その他: `patent-family`（ファミリー情報・スタブ用）, `web`（一般Web）, `manual`（人手入力）
+    - Web 系（`product-page`, `press-release`, `news`, `web`）は `retrieved=YYYY-MM-DD` が必須（P6）。
+- **`verified_at`**: 本文が出典と矛盾しないことを照合した日（YYYY-MM-DD）。
+
+### 本文の統制語彙（3対）
+
+本文の H2 スコープ見出し（Taxonomy / Workflow / Synergistic / Gotchas 等）の内部で、根拠の性質を表す統制語彙は次の3対に固定します。
+
+| 役割 | 日本語（正） | 英語（正） | 配置・挙動 |
+|---|---|---|---|
+| 未検証ブロック | `一般知識（未検証）` | `General Knowledge (Unverified)` | GFM Alert `> [!NOTE] 一般知識（未検証）` または H2〜H6 見出し。配下の単位つき数値は P4 免除 |
+| 公報リンク導入 | `代表公報（実データ）` | `Representative Patents (Verified)` | `## Workflow / Implementation` 内の段落ラベル（太字推奨） |
+| 出典整理節 | `出典に基づく整理` | `Based on Sources` | H3 見出し（任意）。認識論的修飾子として透過処理され親見出しを維持 |
+
+- 表の一部の列だけが未検証数値の場合は、列ヘッダに `（一般知識・未検証）` または `(Unverified)` を記載することで、その列の数値を P4 検査から免除します。
+
+### Concept スケルトン（標準テンプレート）
+
+<!-- okf-concept-skeleton:start -->
+```markdown
+---
+type: Concept
+title: "窒化アルミニウム（AlN）フィラー"
+description: "高熱伝導・電気絶縁性を兼ね備える窒化物セラミックスフィラー"
+tags: [material, filler, nitride]
+scope: taxonomy
+basis: mixed
+sources:
+  - "patent-biblio:EP9999999B1 via=epo-ops"
+---
+# 窒化アルミニウム（AlN）フィラー
+
+窒化アルミニウム（AlN）は、半導体封止材や放熱基板に用いられる代表的な高熱伝導・電気絶縁フィラーである。マトリックス樹脂との複合化設計については [EP9999999B1](../patents/EP9999999B1.md) を参照。
+
+## Taxonomy
+
+ウルツ鉱型結晶構造を持つ共有結合性セラミックスであり、フォノン伝導によって高い熱伝導性を示す。
+
+> [!NOTE] 一般知識（未検証）
+> 焼結体・単結晶の典型的な熱伝導率は約 150–230 W/m·K、線膨張係数（CTE）は約 4.5 ppm/K とされる（目安値、出典未照合）。
+
+## Workflow / Implementation
+
+高充填化では粒径分布の制御と表面処理（シランカップリング剤等）を組み合わせる。
+
+**代表公報（実データ）:** [EP9999999B1](../patents/EP9999999B1.md)
+
+## Synergistic Combinations
+
+球状アルミナや窒化ホウ素（BN）との異種フィラー併用により、充填率と粘度特性のバランスを改善できる。関連手法は [EP9999999B1](../patents/EP9999999B1.md) を参照。
+
+## Gotchas / Anti-Pitfalls
+
+水分との反応（加水分解）によりアンモニアを生じ、界面熱抵抗の上昇や絶縁低下を招くため、耐湿処理の有無を確認する。
+```
+<!-- okf-concept-skeleton:end -->
 
 - パーサは **依存ゼロ** の YAML サブセット（スカラー・インラインリスト・
   ブロックリスト）。ネストしたマッピングは誤解釈を避けるためエラーにします。
@@ -207,13 +283,20 @@ Phase 3 `< 4,000`（`--phases` で各フェーズを出力）。`--backend sqlit
 
 ## 6. 検証（validate）
 
-`okf validate` は次を検査します。
+`okf validate` は 2 パスで構造とプロベナンスを検査します。
 
-- frontmatter の存在、`type`、型、`timestamp`、`scope`
-- 相対リンク切れ（`broken link`）
-- Wiki ルート外へ出るリンク（`link escapes the wiki root`）
-- リンクの無い孤立ノード（警告）
-- ルート `index.md` の欠落（警告）
+### 検査レベルと終了コード
+
+| 検査種別 | 対象・ルール | 既定動作 | `--strict-provenance` |
+|---|---|---|---|
+| **構文・構造エラー (`validate_meta`)** | `type` 欠落、不正型、不正日付、未知の `scope`/`basis`、`sources` 文法違反、リンク切れ、Wiki ルート脱出 | エラー（exit 1） | エラー（exit 1） |
+| **自己矛盾ルール (`P2`, `P4`, `P5`)** | P2（external/mixed なのに sources も外部リンクも無し）、P4（未検証マーカー外のブロック局所裏付け欠落）、P5（external なのに未検証マーカー含有） | 警告（exit 0） | **エラー昇格（exit 1）** |
+| **品質・時点警告 (`P1`, `P3`, `P6`, `P7`, `P8`)** | P1（basis 未指定）、P3（external なのに verified_at 無し）、P6（Web 系 sources の retrieved 欠落）、P7（未知の source kind）、P8（揮発性ニュース出典の3年経過）、孤立ノード、index.md 欠落 | 警告（exit 0） | 警告（exit 0） |
+
+### P4 ブロック局所検査の仕組みと限界
+
+- **仕組み**: 段落・箇条書き・表の各ブロック内で、未検証マーカー（Alert や未検証見出し、未検証列）の外にある単位つき数値（`180 W/m·K` 等）に対し、同一ブロック内に実在する external ノードへの相対リンク、外部リンク、または sources 記載 ID のいずれかの裏付けがあるかを検査します。公報番号（`EP9999999B1`）、日付、バージョン番号、インラインコード・コードブロック内の数値は誤検知防止のため除外されます。
+- **限界**: ブロック局所検査により、ノート内の別セクションに置かれた無関係なリンクでリード文の数値を誤って免除する問題は防げます。ただし「同一ブロック内に無関係な裏付けリンクがある場合」の取り違え（claim 単位の厳密な照合）は検出できず、運用上のレビューで補完します。
 
 終了コードはエラー有りで `1`、警告のみなら `0` です。
 `--json` で機械可読なレポートを出力します。

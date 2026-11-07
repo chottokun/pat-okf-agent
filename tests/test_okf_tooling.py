@@ -61,6 +61,21 @@ class ToolingTests(unittest.TestCase):
         self.assertEqual(stats["concept_count"], 2)
         self.assertEqual(stats["links"], 1)
         self.assertEqual(stats["pattern"], "A")
+        self.assertEqual(stats["basis"], {"external": 0, "model": 0, "mixed": 0, "undeclared": 2})
+
+    def test_wiki_stats_counts_all_four_basis_buckets(self):
+        write(self.base / "wiki2", "index.md", "# Index\n")
+        write(self.base / "wiki2", "ext.md", node("type: Patent\nbasis: external\n"))
+        write(self.base / "wiki2", "mod.md", node("type: Concept\nbasis: model\n"))
+        write(self.base / "wiki2", "mix.md", node("type: Concept\nbasis: mixed\n"))
+        write(self.base / "wiki2", "und.md", node("type: Note\n"))
+        stats = dispatch_tool("okf_stats", {"wiki": "wiki2"}, root=self.base)
+        self.assertEqual(stats["basis"], {
+            "external": 1,
+            "model": 1,
+            "mixed": 1,
+            "undeclared": 1,
+        })
 
     def test_context_traverse_and_validate(self):
         bundle = dispatch_tool(
