@@ -24,7 +24,7 @@ from .search import BackendUnavailable, SearchHit
 
 __all__ = ["SQLiteSearchBackend", "fts5_available"]
 
-_TERM_RE = re.compile(r"[0-9A-Za-z_\u3040-\u30ff\u4e00-\u9fff]+")
+_TERM_RE = re.compile(r"[0-9A-Za-z_\u0080-\u00ff\u0370-\u03ff\u3040-\u30ff\u4e00-\u9fff]+")
 
 
 def fts5_available() -> bool:

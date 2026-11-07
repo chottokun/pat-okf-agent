@@ -30,6 +30,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -47,7 +48,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from . import __version__
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path.cwd()
 
 DEFAULT_CREDENTIALS = ROOT / ".secrets" / "ops_credentials.json"
 DEFAULT_TOKEN_CACHE = ROOT / ".secrets" / "ops_token_cache.json"
@@ -277,6 +278,13 @@ class RateLimiter:
             self.state_path = None
         self._wall = wall
 
+    def _wait_in_process(self) -> None:
+        if self._last is not None:
+            delay = self.min_interval - (self._clock() - self._last)
+            if delay > 0:
+                self._sleep(delay)
+        self._last = self._clock()
+
     def _wait_state(self) -> None:
         try:
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -287,7 +295,10 @@ class RateLimiter:
                     last = 0.0
                     raw = handle.read().strip()
                     if raw:
-                        last = float(raw)
+                        try:
+                            last = float(raw)
+                        except ValueError:
+                            last = 0.0
                     # Clamp so a skewed clock cannot stall the caller.
                     delay = min(self.min_interval - (self._wall() - last),
                                 self.min_interval)
@@ -299,20 +310,19 @@ class RateLimiter:
                     handle.truncate()
                     handle.write(f"{self._wall():.6f}\n")
                     handle.flush()
+                    self._last = self._clock()
                 finally:
                     fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        except (OSError, ValueError):
+        except OSError:
+            self._wait_in_process()
+        except ValueError:
             return
 
     def wait(self) -> None:
         if self.state_path is not None:
             self._wait_state()
             return
-        if self._last is not None:
-            delay = self.min_interval - (self._clock() - self._last)
-            if delay > 0:
-                self._sleep(delay)
-        self._last = self._clock()
+        self._wait_in_process()
 
 
 def _basic_auth(key: str, secret: str) -> str:
@@ -812,12 +822,28 @@ class OpsClient:
         cache: bool = True,
         auth: bool = True,
         retries: int = 2,
+        warn_stale: bool = False,
     ) -> Any:
         """GET an absolute URL, using the on-disk cache unless ``refresh``."""
         path = self._cache_path(name, url)
         if cache and not refresh and path.exists():
             try:
-                return self._decode(path.read_bytes(), parse, url)
+                decoded = self._decode(path.read_bytes(), parse, url)
+                is_dynamic = warn_stale or any(
+                    p in url for p in ("/published-data/search", "/register", "/legal")
+                )
+                if is_dynamic:
+                    try:
+                        age = time.time() - path.stat().st_mtime
+                        if age > 24 * 3600:
+                            print(
+                                f"warning: cache for {name or url} is older than 24 hours "
+                                f"({age / 3600:.1f}h); consider using --refresh",
+                                file=sys.stderr,
+                            )
+                    except OSError:
+                        pass
+                return decoded
             except EpoApiError:
                 # Legacy iterations cached HTTP-error bodies (often XML) under
                 # *.json. Treat an unparsable cache entry as a miss.
@@ -888,16 +914,19 @@ class OpsClient:
     def get_json(self, path: str, *, name: str | None = None,
                  params: Mapping[str, Any] | None = None,
                  refresh: bool = False, cache: bool = True,
-                 auth: bool = True) -> Any:
+                 auth: bool = True, warn_stale: bool = False) -> Any:
         """GET a path relative to the configured OPS REST root."""
         url = path if "://" in path else self.credentials.api_root.rstrip("/") + "/" + path.lstrip("/")
         if params:
             url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
-        return self.get_url(url, name=name, refresh=refresh, cache=cache, auth=auth)
+        return self.get_url(url, name=name, refresh=refresh, cache=cache, auth=auth,
+                            warn_stale=warn_stale)
 
     def get_json_url(self, url: str, *, name: str | None = None,
-                     refresh: bool = False, cache: bool = True) -> Any:
-        return self.get_url(url, name=name, refresh=refresh, cache=cache)
+                     refresh: bool = False, cache: bool = True,
+                     warn_stale: bool = False) -> Any:
+        return self.get_url(url, name=name, refresh=refresh, cache=cache,
+                            warn_stale=warn_stale)
 
     # -- convenience methods ----------------------------------------------
 
@@ -911,7 +940,7 @@ class OpsClient:
         params = {"q": cql, "Range": f"{begin}-{end}"}
         cache_name = name or f"search_{hashlib.sha1(cql.encode()).hexdigest()[:12]}"
         data = self.get_json("/published-data/search", name=cache_name,
-                             params=params, refresh=refresh)
+                             params=params, refresh=refresh, warn_stale=True)
         return parse_search(data, query=cql)
 
     def biblio(self, publication: str, *, name: str | None = None,
@@ -961,7 +990,7 @@ class OpsClient:
         params = {"q": query, "Range": f"{begin}-{end}"}
         cache_name = name or f"register_search_{hashlib.sha1(query.encode()).hexdigest()[:12]}"
         return self.get_json("/register/search", name=cache_name, params=params,
-                             refresh=refresh)
+                             refresh=refresh, warn_stale=True)
 
     def register(self, publication: str, section: str = "biblio", *,
                  use_kind: bool = False, name: str | None = None,
@@ -980,14 +1009,14 @@ class OpsClient:
         cache_name = name or f"register_{target.replace('.', '_')}_{section}"
         return self.get_json(
             f"/register/patent/{target}/{section}", name=cache_name,
-            refresh=refresh)
+            refresh=refresh, warn_stale=True)
 
     def legal(self, publication: str, *, name: str | None = None,
               refresh: bool = False) -> Any:
         docdb = normalize_docdb(publication)
         cache_name = name or f"legal_{docdb.replace('.', '_')}"
         return self.get_json(f"/legal/publication/docdb/{docdb}",
-                             name=cache_name, refresh=refresh)
+                             name=cache_name, refresh=refresh, warn_stale=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1139,7 +1168,7 @@ class EpsClient:
         try:
             self.document(publication, kind=kind)
         except EpoApiError as exc:
-            if exc.status in (404, 500):
+            if exc.status == 404:
                 return False
             raise
         return True
@@ -1298,8 +1327,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "claims":
             _json_print(client.claims(args.publication, refresh=args.refresh))
         return 0
-    except EpoError as exc:
-        print(f"error: {exc}")
+    except (EpoError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 2
 
 

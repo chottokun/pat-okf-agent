@@ -110,6 +110,25 @@ class SQLiteBackendTests(unittest.TestCase):
         self.assertTrue(all(hasattr(hit, "node") for hit in hits))
         self.assertIn("documents", backend.stats())
 
+    def test_term_re_supports_greek_and_latin1_supplement(self):
+        from pat_okf_agent.wiki.sqlite_backend import _TERM_RE
+        self.assertEqual(_TERM_RE.findall("α-olefin"), ["α", "olefin"])
+        self.assertEqual(_TERM_RE.findall("Böhm"), ["Böhm"])
+
+    def test_search_greek_and_latin1_terms(self):
+        backend = self.backend()
+        write(
+            self.root, "seeds/catalyst.md", "type: Note\ntitle: Böhm Catalyst\n",
+            "# Böhm Catalyst\n\nPolymerization of α-olefin compounds.\n",
+        )
+        backend.sync()
+        hits_boehm = backend.search("Böhm")
+        self.assertTrue(hits_boehm)
+        self.assertEqual(hits_boehm[0].node, "seeds/catalyst.md")
+        hits_alpha = backend.search("α-olefin")
+        self.assertTrue(hits_alpha)
+        self.assertEqual(hits_alpha[0].node, "seeds/catalyst.md")
+
 
 if __name__ == "__main__":
     unittest.main()
