@@ -127,27 +127,54 @@ A failure rate above 15% is a Pattern C signal, not an automatic migration.
 Do not add speculative aliases just to improve one query; keep groups small and
 review the per-query baseline/expanded results.
 
-## Update workflow
+## Create and update workflow
 
-1. Read the target note and one or two neighbours.
-2. Check whether a dedicated note already exists. Prefer updating over creating
-   a duplicate.
-3. If creating a note, write one topic, valid frontmatter and relative links.
-4. Put links under standard headings so edge weights are meaningful:
-   - `## Taxonomy` (1.0)
-   - `## Workflow / Implementation` (1.2)
-   - `## Synergistic Combinations` (1.5)
-   - `## Gotchas / Anti-Pitfalls` (2.0)
-5. Run:
+Follow these 5 steps when creating or updating notes:
 
-```bash
-uv run okf validate <wiki>
-uv run okf index <wiki>
-uv run okf context <wiki> "<smoke query>" --json
+1. **Avoid duplicates**: Search (`okf search`) before creating; prefer updating over creating a duplicate.
+2. **Choose type and basis**: Determine `type` (e.g. `Concept`) and epistemic `basis` (`external`, `mixed`, or `model`).
+3. **Select skeleton**: Include 4 major H2 scopes (`Taxonomy`, `Workflow / Implementation`, `Synergistic Combinations`, `Gotchas / Anti-Pitfalls`).
+4. **Isolate unverified metrics and back claims**: Place unverified unit metrics inside `> [!NOTE] 一般知識（未検証）` (or `General Knowledge (Unverified)`). For mixed tables, mark column headers with `（一般知識・未検証）` or `(Unverified)`. Back claims with links under `**代表公報（実データ）:**` (or `Representative Patents (Verified):`) and declare `sources`. Controlled H3 `### 出典に基づく整理` (`Based on Sources`) is transparent.
+5. **Verify immediately**: Run `okf validate <wiki>` and `okf index <wiki>` to confirm zero `[P1]`–`[P8]` warnings.
+
+<!-- okf-concept-skeleton:start -->
+```markdown
+---
+type: Concept
+title: "窒化アルミニウム（AlN）フィラー"
+description: "高熱伝導・電気絶縁性を兼ね備える窒化物セラミックスフィラー"
+tags: [material, filler, nitride]
+scope: taxonomy
+basis: mixed
+sources:
+  - "patent-biblio:EP9999999B1 via=epo-ops"
+---
+# 窒化アルミニウム（AlN）フィラー
+
+窒化アルミニウム（AlN）は、半導体封止材や放熱基板に用いられる代表的な高熱伝導・電気絶縁フィラーである。マトリックス樹脂との複合化設計については [EP9999999B1](../patents/EP9999999B1.md) を参照。
+
+## Taxonomy
+
+ウルツ鉱型結晶構造を持つ共有結合性セラミックスであり、フォノン伝導によって高い熱伝導性を示す。
+
+> [!NOTE] 一般知識（未検証）
+> 焼結体・単結晶の典型的な熱伝導率は約 150–230 W/m·K、線膨張係数（CTE）は約 4.5 ppm/K とされる（目安値、出典未照合）。
+
+## Workflow / Implementation
+
+高充填化では粒径分布の制御と表面処理（シランカップリング剤等）を組み合わせる。
+
+**代表公報（実データ）:** [EP9999999B1](../patents/EP9999999B1.md)
+
+## Synergistic Combinations
+
+球状アルミナや窒化ホウ素（BN）との異種フィラー併用により、充填率と粘度特性のバランスを改善できる。関連手法は [EP9999999B1](../patents/EP9999999B1.md) を参照。
+
+## Gotchas / Anti-Pitfalls
+
+水分との反応（加水分解）によりアンモニアを生じ、界面熱抵抗の上昇や絶縁低下を招くため、耐湿処理の有無を確認する。
 ```
-
-`okf validate` returns exit code 1 on structural errors. Warnings (including
-orphans and unsupported WikiLink syntax) do not fail the command.
+<!-- okf-concept-skeleton:end -->
 
 ## Gotchas and constraints
 

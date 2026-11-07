@@ -255,10 +255,17 @@ def wiki_stats(root: str | Path) -> dict[str, Any]:
     graph = build_graph(root)
     types = Counter(concept.type or "(none)" for concept in concepts)
     scopes = Counter(concept.scope for concept in concepts)
+    basis_counts = {"external": 0, "model": 0, "mixed": 0, "undeclared": 0}
+    for concept in concepts:
+        if concept.basis in ("external", "model", "mixed"):
+            basis_counts[concept.basis] += 1
+        else:
+            basis_counts["undeclared"] += 1
     return {
         "concept_count": len(concepts),
         "types": dict(sorted(types.items())),
         "scopes": dict(sorted(scopes.items())),
+        "basis": basis_counts,
         "links": sum(len(targets) for targets in graph.edges.values()),
         "broken_links": len(graph.broken),
         "pattern": pattern_for(len(concepts)),

@@ -156,6 +156,21 @@ class CliTests(unittest.TestCase):
         self.assertEqual(stats["concept_count"], 2)
         self.assertEqual(stats["pattern"], "A")
         self.assertEqual(stats["scopes"]["gotchas"], 1)
+        self.assertEqual(stats["basis"], {"external": 0, "model": 0, "mixed": 0, "undeclared": 2})
+
+        code, text_out, _ = self.run_cli("stats", self.root)
+        self.assertEqual(code, 0)
+        self.assertIn("basis: external=0  model=0  mixed=0  undeclared=2", text_out)
+
+    def test_validate_strict_provenance_flag(self):
+        write(self.root, "index.md", "# Index\n")
+        # basis: external without sources is a P2 warning normally
+        write(self.root, "a.md", node("type: Concept\nbasis: external\nverified_at: '2026-11-07'\n", "# A\n"))
+        code, out, _ = self.run_cli("validate", self.root)
+        self.assertEqual(code, 0)
+
+        code_strict, out_strict, _ = self.run_cli("validate", self.root, "--strict-provenance")
+        self.assertEqual(code_strict, 1)
 
     def test_init_json_and_multiple_skill_dirs(self):
         first = Path(self.tmp.name) / "skills-a"

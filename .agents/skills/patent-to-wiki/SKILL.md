@@ -67,8 +67,8 @@ uv run okf ingest-epo \
 
 The ingester:
 
-- writes one `patents/<PUBLICATION>.md` node
-- creates family stubs only when no full node exists
+- writes one `patents/<PUBLICATION>.md` node with `basis: external`, `sources` (`patent-biblio:<PUB> via=epo-ops` and `patent-claims:<PUB> via=epo-ops|epo-eps`), and `verified_at: YYYY-MM-DD`
+- creates family stubs only when no full node exists, with `basis: external` and `sources: ["patent-family:<PARENT>"]`
 - writes relative links for family members
 - appends `log.md`
 - regenerates progressive indexes
@@ -93,7 +93,7 @@ uv run okf context <wiki> "<title or alloy>" \
 
 Check that:
 
-- `broken_links` is zero
+- `broken_links` is zero and no provenance warnings (`[P1]`–`[P8]`) are reported
 - the new patent is reachable from the expected workflow or family
 - incompatible Gotchas nodes are pruned rather than used
 - the context token count stays within the requested budget

@@ -69,6 +69,9 @@ def _parser() -> argparse.ArgumentParser:
 
     p_validate = sub.add_parser("validate", help="validate structure and links")
     p_validate.add_argument("dir")
+    p_validate.add_argument(
+        "--strict-provenance", action="store_true",
+        help="promote provenance self-contradictions (P2, P4, P5) to errors")
     p_validate.add_argument("--json", action="store_true")
 
     p_search = sub.add_parser("search", help="local full-text search")
@@ -254,7 +257,7 @@ def _dispatch(args: argparse.Namespace) -> int:
         return 0
 
     if args.command == "validate":
-        report = validate_wiki(args.dir)
+        report = validate_wiki(args.dir, strict_provenance=args.strict_provenance)
         if args.json:
             print(json.dumps(report.as_dict(), ensure_ascii=False, indent=2))
         else:
@@ -415,6 +418,11 @@ def _dispatch(args: argparse.Namespace) -> int:
                   f"pattern: {stats['pattern']}")
             for scope, count in stats["scopes"].items():
                 print(f"  {scope}: {count}")
+            basis = stats["basis"]
+            print(f"basis: external={basis['external']}  "
+                  f"model={basis['model']}  "
+                  f"mixed={basis['mixed']}  "
+                  f"undeclared={basis['undeclared']}")
         return 0
 
     if args.command == "skills":

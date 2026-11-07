@@ -5,7 +5,7 @@ import os
 import posixpath
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
@@ -13,7 +13,14 @@ from urllib.parse import unquote
 from .frontmatter import FrontmatterError, dump_document, parse_frontmatter
 
 __all__ = [
+    "BASIS_VALUES",
+    "KNOWN_SOURCE_KINDS",
+    "NEWS_SOURCE_KINDS",
     "SCOPE_WEIGHTS",
+    "SOURCE_ATTR_KEYS",
+    "SourceEntry",
+    "TRANSPARENT_HEADINGS",
+    "WEB_SOURCE_KINDS",
     "Concept",
     "Link",
     "Section",
@@ -21,8 +28,10 @@ __all__ = [
     "extract_sections",
     "find_wikilinks",
     "is_special",
+    "is_transparent_heading",
     "iter_concepts",
     "load_concept",
+    "parse_source_entry",
     "relevance",
     "scope_from_heading",
     "scope_of",
@@ -37,6 +46,104 @@ SCOPE_WEIGHTS: dict[str, float] = {
     "synergistic": 1.5,
     "gotchas": 2.0,
 }
+
+BASIS_VALUES: tuple[str, ...] = ("external", "model", "mixed")
+
+KNOWN_SOURCE_KINDS: tuple[str, ...] = (
+    "patent-biblio",
+    "patent-claims",
+    "patent-legal",
+    "patent-family",
+    "paper",
+    "preprint",
+    "datasheet",
+    "product-page",
+    "press-release",
+    "standard",
+    "news",
+    "web",
+    "manual",
+)
+
+WEB_SOURCE_KINDS: tuple[str, ...] = (
+    "product-page",
+    "press-release",
+    "news",
+    "web",
+)
+
+NEWS_SOURCE_KINDS: tuple[str, ...] = (
+    "press-release",
+    "news",
+)
+
+SOURCE_ATTR_KEYS: tuple[str, ...] = ("issued", "retrieved", "via")
+
+TRANSPARENT_HEADINGS: tuple[str, ...] = (
+    "一般知識（未検証）",
+    "general knowledge (unverified)",
+    "出典に基づく整理",
+    "based on sources",
+)
+
+_ISO_DATE_STRICT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def is_transparent_heading(heading: str) -> bool:
+    """Return True when ``heading`` is an epistemic modifier heading."""
+    cleaned = heading.strip().casefold()
+    return cleaned in TRANSPARENT_HEADINGS
+
+
+@dataclass(frozen=True)
+class SourceEntry:
+    kind: str
+    id: str
+    attrs: dict[str, str]
+    raw: str
+
+
+def _is_valid_iso_date(value: str) -> bool:
+    if not isinstance(value, str) or not _ISO_DATE_STRICT_RE.match(value):
+        return False
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
+def parse_source_entry(entry: str) -> SourceEntry:
+    """Parse and syntax-check one ``sources`` item (raises ValueError)."""
+    if not isinstance(entry, str) or not entry.strip():
+        raise ValueError("source entry must be a non-empty string")
+    tokens = entry.strip().split()
+    head = tokens[0]
+    if ":" not in head:
+        raise ValueError(f"source entry missing '<kind>:<id>': {entry!r}")
+    kind, source_id = head.split(":", 1)
+    if not kind or not source_id:
+        raise ValueError(
+            f"source entry must have non-empty kind and id: {entry!r}")
+    attrs: dict[str, str] = {}
+    for token in tokens[1:]:
+        if "=" not in token:
+            raise ValueError(
+                f"invalid source attribute (expected key=value): {token!r}")
+        key, val = token.split("=", 1)
+        if key not in SOURCE_ATTR_KEYS:
+            raise ValueError(f"unknown source attribute key: {key!r}")
+        if key in attrs:
+            raise ValueError(f"duplicate source attribute key: {key!r}")
+        if not val:
+            raise ValueError(
+                f"empty value for source attribute {key!r}: {entry!r}")
+        if key in ("issued", "retrieved") and not _is_valid_iso_date(val):
+            raise ValueError(
+                f"invalid ISO date for {key}={val!r} in {entry!r}")
+        attrs[key] = val
+    return SourceEntry(kind=kind, id=source_id, attrs=attrs,
+                       raw=entry.strip())
 
 SPECIAL_FILES = {"index.md", "log.md"}
 _INDEX_RE = re.compile(r"^index(?:-\d+)?\.md$")
@@ -139,6 +246,23 @@ class Concept:
     def scope(self) -> str:
         return scope_of(self.meta)
 
+    @property
+    def basis(self) -> str | None:
+        value = self.meta.get("basis")
+        return value if isinstance(value, str) and value else None
+
+    @property
+    def sources(self) -> list[str]:
+        value = self.meta.get("sources")
+        if not isinstance(value, list):
+            return []
+        return [str(item) for item in value]
+
+    @property
+    def verified_at(self) -> str | None:
+        value = self.meta.get("verified_at")
+        return value if isinstance(value, str) and value else None
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "node": self.rel,
@@ -149,6 +273,9 @@ class Concept:
             "scope": self.scope,
             "timestamp": self.timestamp,
             "resource": self.resource,
+            "basis": self.basis,
+            "sources": self.sources,
+            "verified_at": self.verified_at,
         }
 
 
@@ -229,6 +356,31 @@ def validate_meta(meta: dict[str, Any]) -> list[str]:
     if scope is not None:
         if not isinstance(scope, str) or scope.casefold() not in SCOPE_WEIGHTS:
             errors.append(f"unknown scope: {scope}")
+
+    basis = meta.get("basis")
+    if basis is not None:
+        if not isinstance(basis, str) or basis not in BASIS_VALUES:
+            errors.append(f"invalid basis: {basis}")
+
+    sources = meta.get("sources")
+    if sources is not None:
+        if not isinstance(sources, list):
+            errors.append("sources must be a list of strings")
+        else:
+            for item in sources:
+                if not isinstance(item, str):
+                    errors.append("sources items must be strings")
+                    continue
+                try:
+                    parse_source_entry(item)
+                except ValueError as exc:
+                    errors.append(f"invalid source entry: {exc}")
+
+    verified_at = meta.get("verified_at")
+    if verified_at is not None:
+        if (not isinstance(verified_at, str)
+                or not _is_valid_iso_date(verified_at)):
+            errors.append(f"invalid verified_at: {verified_at}")
     return errors
 
 
@@ -260,7 +412,11 @@ def extract_links(body: str, source_rel: str) -> list[Link]:
                 stack.pop()
             stack.append((level, text, scope_from_heading(text)))
 
-        current_heading = stack[-1][1] if stack else ""
+        current_heading = next(
+            (text for _, text, _ in reversed(stack)
+             if not is_transparent_heading(text)),
+            "",
+        )
         section_scope = next(
             (scope for _, _, scope in reversed(stack) if scope), None)
 
