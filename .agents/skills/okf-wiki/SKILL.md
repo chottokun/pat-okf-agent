@@ -134,7 +134,7 @@ Follow these 5 steps when creating or updating notes:
 1. **Avoid duplicates**: Search (`okf search`) before creating; prefer updating over creating a duplicate.
 2. **Choose type and basis**: Determine `type` (e.g. `Concept`) and epistemic `basis` (`external`, `mixed`, or `model`).
 3. **Select skeleton**: Include 4 major H2 scopes (`Taxonomy`, `Workflow / Implementation`, `Synergistic Combinations`, `Gotchas / Anti-Pitfalls`).
-4. **Isolate unverified metrics and back claims**: Place unverified unit metrics inside `> [!NOTE] 一般知識（未検証）` (or `General Knowledge (Unverified)`). For mixed tables, mark column headers with `（一般知識・未検証）` or `(Unverified)`. Back claims with links under `**代表公報（実データ）:**` (or `Representative Patents (Verified):`) and declare `sources`. Controlled H3 `### 出典に基づく整理` (`Based on Sources`) is transparent.
+4. **Isolate unverified metrics and back claims**: Place unverified unit metrics inside `> [!NOTE] 一般知識（未検証）` (or `General Knowledge (Unverified)`). For mixed tables, mark column headers with `（一般知識・未検証）` or `(Unverified)`. Back claims with links under `**代表公報（実データ）:**` (or `Representative Patents (Verified):`) and declare `sources`. Controlled H3 `### 出典に基づく整理` (`Based on Sources`) is transparent. Verify external papers/web sources with `okf verify-source` (see `.agents/skills/source-verify/SKILL.md`).
 5. **Verify immediately**: Run `okf validate <wiki>` and `okf index <wiki>` to confirm zero `[P1]`–`[P8]` warnings.
 
 <!-- okf-concept-skeleton:start -->
