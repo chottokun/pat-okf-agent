@@ -683,7 +683,43 @@ Fair use は `epo.py` 側で維持されます（OPS 3秒間隔・クロスプ�
 検索25件上限、ディスクキャッシュ優先）。1件の取り込みは最大4リクエスト
 （biblio / claims / family / EPSフォールバック）で、以降はキャッシュで完結します。
 
-## 10. デモ
+## 10. 出典検証（verify-source）
+
+特許（EPO）以外の学術論文（DOI / arXiv）やメーカー公式データシート・Web ページ（URL / 層4論文）を、決定論的かつキャッシュファーストで機械検証し、客観的証跡を保存します。
+
+### CLI コマンド例
+
+```bash
+# DOI の検証（Crossref → JaLC → doi.org CSL フォールバック）
+uv run okf verify-source 10.1111/jace.14748 \
+  --expect-title "Aluminum Nitride" \
+  --check-claim "180 W/m" \
+  --json
+
+# arXiv ID の検証
+uv run okf verify-source arXiv:2401.12345 --expect-author "Smith" --json
+
+# Web 出典（データシート・製品ページ等）の検証とスナップショット保存
+uv run okf verify-source "datasheet:https://example.com/aln-datasheet.pdf" \
+  --issued 2024-05-01 \
+  --json
+```
+
+### 検証フローとフォールバック
+- **Crossref DOI**: Crossref Works API で書誌（タイトル、著者、出版者、完全日付、JATS XML 除去済み abstract、撤回フラグ）を照合。
+- **JaLC / DataCite フォールバック**: Crossref 404 時、`doi.org/ra` で登録機関を判定。JaLC は JaLC REST API、DataCite 等は `doi.org` CSL-JSON content negotiation でメタデータを解決。
+- **arXiv ID**: `export.arxiv.org` の Atom XML から書誌・abstract を抽出。出版版 DOI（`<arxiv:doi>`）があれば警告とメタデータに記録。
+- **Web URL**: `data/external/source_verify/snapshots/` に本文 `<key>.<ext>` と `.meta.json` サイドカー（`sha256`, `extracted_publisher`, `extracted_issued`, `retrieved_at`）をアトミック保存。PDF は `pypdf`（`--extra pdf`）でテキスト抽出し `--check-claim` を検証。
+
+### 終了コード契約
+- `0` (`verified`): 実在確認および期待条件（`--expect-*`, `--check-claim`）の照合成功。`okf_source` 文字列を生成。
+- `1` (`not_found` / `mismatch` / `unverified`): 出典不在、書誌不一致、ペイウォール（HTTP 403）、または主張文字列の不一致。
+- `2` (`error`): 引数不正、API 障害、HTTP 429 リトライ超過、オフライン時のキャッシュミス。
+
+### 機構とポリシーの分離
+ツールは客観的証跡（出版者、発行日、ハッシュ、スナップショット、文字列一致結果）のみを返し、信頼スコアや一次/二次情報の判定は行いません。返却された証跡に基づき、エージェントがノート本文のブロック単位 grounding と注記を決定します。
+
+## 11. デモ
 
 `examples/wiki/` は**合成特許データ**（`EP9999999B1` と架空のファミリー）に、
 Workflow / Gotcha / Synergistic / 制約付き Gotcha を加えた実例です。
@@ -703,7 +739,7 @@ uv run okf search examples/wiki "クレーム" --backend sqlite \
   --db /tmp/okf-demo.sqlite3
 ```
 
-## 11. 制約と次の一手
+## 12. 制約と次の一手
 
 - Pattern A/B/C は実装済みです。C は `--backend qdrant` の明示指定でのみ
   有効で、`auto` は 500 ノード超で B を選びます。ONNX Runtime や
@@ -732,7 +768,7 @@ uv run okf search examples/wiki "クレーム" --backend sqlite \
 - 大規模化したら `okf stats` と `okf eval-synonyms` の推奨を目安に、
   B/C へ明示的に移行してください。
 
-## 12. リリース前チェック
+## 13. リリース前チェック
 
 リリース候補では、テスト・デモ検証・スキル検証・オフラインスモーク・
 秘密情報チェックをまとめて実行します。

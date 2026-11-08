@@ -1,6 +1,6 @@
 # pat-okf-agent
 
-Zero-dependency Python 3.12+ toolkit combining cache-first **EPO OPS / EPS** and **USPTO Open Data Portal (ODP)** patent clients with an **OKF v0.2 Markdown knowledge base**, graph traversal, context compiler, and MCP server (`okf-mcp`).
+Python 3.12+ toolkit combining cache-first **EPO OPS / EPS** and **USPTO Open Data Portal (ODP)** patent clients with an **OKF v0.2 Markdown knowledge base**, graph traversal, context compiler, and MCP server (`okf-mcp`).
 
 ## Features & Repository Layout
 
@@ -30,12 +30,12 @@ Zero-dependency Python 3.12+ toolkit combining cache-first **EPO OPS / EPS** and
 
 1. **Credentials stay out of Git.** Place EPO OPS credentials in `.secrets/ops_credentials.json` (or `EPO_OPS_CONSUMER_KEY` / `EPO_OPS_CONSUMER_SECRET`) and USPTO ODP keys in `.secrets/uspto_credentials.json` (or `USPTO_API_KEY`). Both `.secrets/` and `data/external/` are gitignored and blocked by CI guards.
 2. **Cache-first & rate-limited by default.** Minimum 3 s spacing between EPO OPS requests is shared across processes (`data/external/ops_rate_state.json`, override with `EPO_OPS_RATE_STATE`), search windows are capped at 25 results (`MAX_SEARCH_RESULTS`), and responses are served from the local disk cache before any network call.
-3. **Requirements.** Python **3.12 or newer** (tested on 3.12, 3.13, and 3.14) with zero third-party runtime dependencies.
+3. **Requirements.** Python **3.12 or newer** (tested on 3.12, 3.13, and 3.14). Optional features (e.g. PDF text extraction) are available via extras (`--extra pdf`).
 
 ## Quick Start with `uv` (Recommended)
 
 ```bash
-uv sync                                          # creates .venv from pyproject.toml (0 external deps)
+uv sync                                          # creates .venv from pyproject.toml
 uv run python -m unittest discover -s tests -v   # offline unit test suite
 uv run python scripts/release_smoke.py           # offline CLI & MCP release smoke
 uv run epo check                                 # OPS credential resolution (no network)
@@ -45,7 +45,7 @@ uv run epo search 'pa="EXAMPLE CORP"' --end 25
 uv run epo biblio WO9999999A1
 uv run epo eps-info EP9999999B1
 
-# OKF knowledge base (Markdown + relative-link graph, zero deps)
+# OKF knowledge base (Markdown + relative-link graph)
 uv run okf init mywiki \
   --skills-dir .agents/skills \
   --skills-dir .opencode/skills

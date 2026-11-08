@@ -5,12 +5,17 @@ description = "EPO/USPTO patent data access + OKF v0.2 Markdown knowledge base"
 readme = "README.md"
 authors = [{name = "Chottokun"}]
 requires-python = ">=3.12"
-dependencies = []  # stdlib-only by design
+dependencies = []
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+]
+
+[project.optional-dependencies]
+pdf = [
+    "pypdf>=5.0.0",
 ]
 
 [project.scripts]

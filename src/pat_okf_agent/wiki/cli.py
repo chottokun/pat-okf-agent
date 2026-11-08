@@ -31,8 +31,9 @@ from .synonyms import (
 )
 from .tooling import TOOL_SPECS, ToolError, wiki_stats
 from .validate import validate_wiki
+from .verify import SourceVerifier, SourceVerifyError
 
-__all__ = ["main"]
+__all__ = ["main", "SourceVerifier", "SourceVerifyError"]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -41,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return _dispatch(args)
     except (EpoError, FrontmatterError, BackendUnavailable, ToolError,
-            OSError, ValueError) as exc:
+            SourceVerifyError, OSError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
@@ -221,6 +222,32 @@ def _parser() -> argparse.ArgumentParser:
     p_ingest.add_argument("--credentials", default=None)
     p_ingest.add_argument("--cache-dir", default=None)
     p_ingest.add_argument("--json", action="store_true")
+
+    p_verify = sub.add_parser(
+        "verify-source",
+        help="verify an external source (DOI, arXiv ID, or Web URL)",
+    )
+    p_verify.add_argument("target", help="DOI, arXiv ID, Web URL, or <kind>:<id>")
+    p_verify.add_argument("--kind", default=None, help="override source kind")
+    p_verify.add_argument("--issued", default=None, help="known issue date YYYY-MM-DD")
+    p_verify.add_argument("--expect-title", default=None, help="expected title substring")
+    p_verify.add_argument("--expect-author", default=None, help="expected author name")
+    p_verify.add_argument("--expect-year", type=int, default=None, help="expected year")
+    p_verify.add_argument(
+        "--check-claim",
+        action="append",
+        default=None,
+        help="string to check in content (repeatable)",
+    )
+    p_verify.add_argument("--verify-landing", action="store_true", help="verify landing page for DOI")
+    p_verify.add_argument("--mailto", default=None, help="contact email for Crossref polite pool")
+    p_verify.add_argument("--cache-dir", default=None, help="cache directory path")
+    p_verify.add_argument("--sleep", type=float, default=None, help="minimum request spacing in seconds")
+    p_verify.add_argument("--no-rate-state", action="store_true", help="disable cross-process rate state lock")
+    p_verify.add_argument("--offline", action="store_true", help="offline mode (cache only)")
+    p_verify.add_argument("--refresh", action="store_true", help="ignore cache and re-fetch")
+    p_verify.add_argument("--json", action="store_true", help="output JSON result")
+
     return parser
 
 
@@ -570,6 +597,45 @@ def _dispatch(args: argparse.Namespace) -> int:
             for warning in summary.get("warnings", []):
                 print(f"WARN: {warning}")
         return 0
+
+    if args.command == "verify-source":
+        verifier = SourceVerifier(
+            cache_dir=args.cache_dir,
+            offline=args.offline,
+            refresh=args.refresh,
+            mailto=args.mailto,
+            sleep=args.sleep,
+            no_rate_state=args.no_rate_state,
+        )
+        res = verifier.verify(
+            args.target,
+            kind=args.kind,
+            issued=args.issued,
+            expect_title=args.expect_title,
+            expect_author=args.expect_author,
+            expect_year=args.expect_year,
+            check_claim=args.check_claim,
+            verify_landing=args.verify_landing,
+        )
+        if args.json:
+            print(json.dumps(res.as_dict(), indent=2, ensure_ascii=False))
+        else:
+            print(f"status: {res.status}")
+            print(f"identifier: {res.identifier} ({res.identifier_type})")
+            if res.metadata.title:
+                print(f"title: {res.metadata.title}")
+            if res.metadata.publisher:
+                print(f"publisher: {res.metadata.publisher}")
+            if res.issued:
+                print(f"issued: {res.issued}")
+            if res.okf_source:
+                print(f"source: {res.okf_source}")
+            if res.warnings:
+                for w in res.warnings:
+                    print(f"warning: {w}")
+            if res.error:
+                print(f"error: {res.error}")
+        return 0 if res.ok else 1
 
     return 2
 

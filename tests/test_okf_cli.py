@@ -436,6 +436,90 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("seed not found", err)
 
+    def test_verify_source_verified_exit_0_json(self):
+        from pat_okf_agent.wiki.verify import (
+            EvidenceRecord,
+            SourceMetadata,
+            VerificationChecks,
+            VerificationResult,
+        )
+
+        dummy_res = VerificationResult(
+            ok=True,
+            status="verified",
+            input="paper:10.1111/jace.14748",
+            identifier="10.1111/jace.14748",
+            identifier_type="doi",
+            kind="paper",
+            registration_agency="crossref",
+            via="crossref",
+            retrieved_at="2026-11-08",
+            issued="2017-01-12",
+            metadata=SourceMetadata(title="AlN Paper", publisher="Wiley", year=2017),
+            checks=VerificationChecks(title_match=True),
+            evidence=EvidenceRecord(sha256="sha256:abc"),
+            okf_source="paper:10.1111/jace.14748 issued=2017-01-12 retrieved=2026-11-08 via=crossref",
+        )
+
+        with patch("pat_okf_agent.wiki.cli.SourceVerifier.verify", return_value=dummy_res):
+            code, out, err = self.run_cli("verify-source", "paper:10.1111/jace.14748", "--json")
+            self.assertEqual(code, 0)
+            data = json.loads(out)
+            self.assertTrue(data["ok"])
+            self.assertEqual(data["status"], "verified")
+            self.assertEqual(data["okf_source"], dummy_res.okf_source)
+
+            # Plain text output
+            code_txt, out_txt, _ = self.run_cli("verify-source", "paper:10.1111/jace.14748")
+            self.assertEqual(code_txt, 0)
+            self.assertIn("status: verified", out_txt)
+            self.assertIn("paper:10.1111/jace.14748", out_txt)
+
+    def test_verify_source_not_found_or_mismatch_exit_1(self):
+        from pat_okf_agent.wiki.verify import (
+            EvidenceRecord,
+            SourceMetadata,
+            VerificationChecks,
+            VerificationResult,
+        )
+
+        mismatch_res = VerificationResult(
+            ok=False,
+            status="mismatch",
+            input="10.1111/jace.14748",
+            identifier="10.1111/jace.14748",
+            identifier_type="doi",
+            kind="paper",
+            registration_agency="crossref",
+            via="crossref",
+            retrieved_at="2026-11-08",
+            issued=None,
+            metadata=SourceMetadata(title="AlN Paper", year=2017),
+            checks=VerificationChecks(year_match=False),
+            evidence=EvidenceRecord(),
+            okf_source=None,
+        )
+
+        with patch("pat_okf_agent.wiki.cli.SourceVerifier.verify", return_value=mismatch_res):
+            code, out, _ = self.run_cli("verify-source", "10.1111/jace.14748", "--expect-year", "1900", "--json")
+            self.assertEqual(code, 1)
+            data = json.loads(out)
+            self.assertFalse(data["ok"])
+            self.assertEqual(data["status"], "mismatch")
+
+    def test_verify_source_error_exit_2(self):
+        from pat_okf_agent.wiki.verify import SourceOfflineError
+
+        with patch("pat_okf_agent.wiki.cli.SourceVerifier.verify", side_effect=SourceOfflineError("cache miss")):
+            code, out, err = self.run_cli("verify-source", "10.1111/uncached", "--offline")
+            self.assertEqual(code, 2)
+            self.assertIn("error: cache miss", err)
+
+        # Invalid target raises ValueError -> exit 2
+        code_inv, out_inv, err_inv = self.run_cli("verify-source", "not-a-valid-target")
+        self.assertEqual(code_inv, 2)
+        self.assertIn("error:", err_inv)
+
 
 if __name__ == "__main__":
     unittest.main()
