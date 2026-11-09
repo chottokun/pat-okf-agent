@@ -291,7 +291,22 @@ Phase 3 `< 4,000`（`--phases` で各フェーズを出力）。`--backend sqlit
 |---|---|---|---|
 | **構文・構造エラー (`validate_meta`)** | `type` 欠落、不正型、不正日付、未知の `scope`/`basis`、`sources` 文法違反、リンク切れ、Wiki ルート脱出 | エラー（exit 1） | エラー（exit 1） |
 | **自己矛盾ルール (`P2`, `P4`, `P5`)** | P2（external/mixed なのに sources も外部リンクも無し）、P4（未検証マーカー外のブロック局所裏付け欠落）、P5（external なのに未検証マーカー含有） | 警告（exit 0） | **エラー昇格（exit 1）** |
+| **証跡整合ルール (`E1`)**（`--check-evidence` 指定時） | E1（参照スナップショットの欠落・破損・墓石参照） | 警告（exit 0） | **エラー昇格（exit 1）** |
 | **品質・時点警告 (`P1`, `P3`, `P6`, `P7`, `P8`)** | P1（basis 未指定）、P3（external なのに verified_at 無し）、P6（Web 系 sources の retrieved 欠落）、P7（未知の source kind）、P8（揮発性ニュース出典の3年経過）、孤立ノード、index.md 欠落 | 警告（exit 0） | 警告（exit 0） |
+| **証跡監査警告 (`E2`, `E3`)**（`--check-evidence` 指定時） | E2（理由未記録の孤立スナップショット）、E3（メタデータ欠落ファイルまたは本体欠損ファイル） | 警告（exit 0） | 警告（exit 0） |
+
+### 証跡整合チェック（--check-evidence）
+
+`--check-evidence` を指定すると、各ノートの `sources:` に記載された URL 出典（`web:`, `datasheet:` 等）に対応するスナップショットファイル（`.meta.json` および生本体ファイル）の実在と整合性を検査します。また、未参照スナップショット（孤立）の理由記録状況や墓石（`tombstones`）を監査します。
+保存先ディレクトリを既定（`data/external/source_verify`）から変更する場合は `--evidence-dir <dir>` で上書きします。
+
+```bash
+# 通常トリアージ実行（警告一覧表示、エラーが無ければ exit 0）
+uv run okf validate <wiki> --check-evidence
+
+# バッチ完了ゲート実行（参照先スナップショット欠落 E1 をエラー昇格し exit 1 とする）
+uv run okf validate <wiki> --strict-provenance --check-evidence --json
+```
 
 ### P4 ブロック局所検査の仕組みと限界
 
@@ -703,6 +718,10 @@ uv run okf verify-source arXiv:2401.12345 --expect-author "Smith" --json
 uv run okf verify-source "datasheet:https://example.com/aln-datasheet.pdf" \
   --issued 2024-05-01 \
   --json
+
+# 不採用スナップショットへの理由記録（孤立トリアージ）
+uv run okf verify-source "https://example.com/unadopted.html" \
+  --orphan-reason "数値なし（定性的記述のみ）のため不採用"
 ```
 
 ### 検証フローとフォールバック

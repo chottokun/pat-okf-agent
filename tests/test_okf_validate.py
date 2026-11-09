@@ -11,7 +11,9 @@ from pat_okf_agent.epo import PublicationRef
 from pat_okf_agent.wiki.ingest import ingest_publication
 from pat_okf_agent.wiki.validate import (
     STRICT_PROVENANCE_RULES,
+    EvidenceReport,
     ValidationReport,
+    validate_evidence,
     validate_provenance,
     validate_wiki,
 )
@@ -465,6 +467,260 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(report.errors, [], f"skeleton validation errors: {report.errors}")
         self.assertEqual(report.warnings, [], f"skeleton validation warnings: {report.warnings}")
         self.assertTrue(report.ok)
+
+
+class TestEvidenceValidation(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name) / "wiki"
+        self.root.mkdir()
+        self.evidence_dir = Path(self.tmp.name) / "evidence"
+        self.snapshots_dir = self.evidence_dir / "snapshots"
+        self.snapshots_dir.mkdir(parents=True)
+
+        write(self.root, "index.md", "# Index\n")
+
+    def _create_snapshot(
+        self,
+        url: str,
+        *,
+        body: bytes | None = b"sample content",
+        meta_extra: dict | None = None,
+    ) -> tuple[str, Path, Path | None]:
+        from pat_okf_agent.wiki.verify import snapshot_key_for_url
+        import json
+
+        key = snapshot_key_for_url(url)
+        meta_path = self.snapshots_dir / f"{key}.meta.json"
+        meta_data = {
+            "url": url,
+            "sha256": "sha256:dummy",
+            "retrieved_at": "2026-11-09",
+            "title": "Sample",
+        }
+        if meta_extra:
+            meta_data.update(meta_extra)
+        meta_path.write_text(json.dumps(meta_data, indent=2), encoding="utf-8")
+
+        body_path = None
+        if body is not None:
+            body_path = self.snapshots_dir / f"{key}.html"
+            body_path.write_bytes(body)
+        return key, meta_path, body_path
+
+    def test_default_check_evidence_is_false_and_backward_compatible(self):
+        write(self.root, "concepts/aln.md", node(
+            "type: Concept\n"
+            "title: 'AlN'\n"
+            "basis: external\n"
+            "sources: ['web:https://example.com/aln.html retrieved=2026-11-09']\n"
+            "verified_at: '2026-11-09'\n",
+            "# AlN\n",
+        ))
+        report = validate_wiki(self.root)
+        self.assertIsNone(report.evidence)
+        d = report.as_dict()
+        self.assertEqual(set(d), {"ok", "errors", "warnings", "concept_count"})
+
+    def test_referenced_snapshot_present(self):
+        url = "https://example.com/aln.html"
+        self._create_snapshot(url)
+
+        write(self.root, "concepts/aln.md", node(
+            "type: Concept\n"
+            "title: 'AlN'\n"
+            "basis: external\n"
+            "sources: ['web:https://example.com/aln.html retrieved=2026-11-09']\n"
+            "verified_at: '2026-11-09'\n",
+            "# AlN\n",
+        ))
+        report = validate_wiki(
+            self.root,
+            check_orphans=False,
+            check_evidence=True,
+            evidence_dir=self.evidence_dir,
+            strict_provenance=True,
+        )
+        self.assertTrue(report.ok)
+        self.assertEqual(report.errors, [])
+        self.assertEqual(report.warnings, [])
+        self.assertIsNotNone(report.evidence)
+        self.assertEqual(report.evidence.referenced_count, 1)
+        self.assertEqual(report.evidence.missing_count, 0)
+        self.assertEqual(report.evidence.orphan_count, 0)
+        self.assertIn("evidence", report.as_dict())
+
+    def test_missing_snapshot_metadata_warn_or_error(self):
+        write(self.root, "concepts/aln.md", node(
+            "type: Concept\n"
+            "title: 'AlN'\n"
+            "basis: external\n"
+            "sources: ['web:https://example.com/missing.html retrieved=2026-11-09']\n"
+            "verified_at: '2026-11-09'\n",
+            "# AlN\n",
+        ))
+        # Normal triage: WARN (exit 0)
+        report_warn = validate_wiki(
+            self.root,
+            check_evidence=True,
+            evidence_dir=self.evidence_dir,
+            strict_provenance=False,
+        )
+        self.assertTrue(report_warn.ok)
+        self.assertEqual(len(report_warn.errors), 0)
+        self.assertTrue(any("[E1]" in w and "missing snapshot metadata" in w for w in report_warn.warnings))
+        self.assertEqual(report_warn.evidence.missing_count, 1)
+
+        # Strict provenance: ERROR (exit 1)
+        report_strict = validate_wiki(
+            self.root,
+            check_evidence=True,
+            evidence_dir=self.evidence_dir,
+            strict_provenance=True,
+        )
+        self.assertFalse(report_strict.ok)
+        self.assertTrue(any("[E1]" in e and "missing snapshot metadata" in e for e in report_strict.errors))
+
+    def test_missing_snapshot_body_warn_or_error(self):
+        url = "https://example.com/no-body.html"
+        self._create_snapshot(url, body=None)
+
+        write(self.root, "concepts/aln.md", node(
+            "type: Concept\n"
+            "title: 'AlN'\n"
+            "basis: external\n"
+            "sources: ['web:https://example.com/no-body.html retrieved=2026-11-09']\n"
+            "verified_at: '2026-11-09'\n",
+            "# AlN\n",
+        ))
+        report = validate_wiki(
+            self.root,
+            check_evidence=True,
+            evidence_dir=self.evidence_dir,
+            strict_provenance=True,
+        )
+        self.assertFalse(report.ok)
+        self.assertTrue(any("[E1]" in e and "missing snapshot body file" in e for e in report.errors))
+
+    def test_referenced_tombstone_warn_or_error(self):
+        url = "https://example.com/tombstoned.html"
+        self._create_snapshot(
+            url,
+            body=None,
+            meta_extra={"deleted_at": "2026-11-09", "orphan_reason": "removed"},
+        )
+
+        write(self.root, "concepts/aln.md", node(
+            "type: Concept\n"
+            "title: 'AlN'\n"
+            "basis: external\n"
+            "sources: ['web:https://example.com/tombstoned.html retrieved=2026-11-09']\n"
+            "verified_at: '2026-11-09'\n",
+            "# AlN\n",
+        ))
+        report = validate_wiki(
+            self.root,
+            check_evidence=True,
+            evidence_dir=self.evidence_dir,
+            strict_provenance=True,
+        )
+        self.assertFalse(report.ok)
+        self.assertTrue(any("[E1]" in e and "references tombstoned snapshot" in e for e in report.errors))
+
+    def test_non_url_sources_not_subject_to_e1(self):
+        write(self.root, "concepts/aln.md", node(
+            "type: Concept\n"
+            "title: 'AlN'\n"
+            "basis: external\n"
+            "sources:\n"
+            "  - 'paper:10.1111/jace.14748 via=crossref'\n"
+            "  - 'preprint:arXiv:2401.12345 via=arxiv'\n"
+            "  - 'patent-biblio:EP1234567A1 via=epo-ops'\n"
+            "verified_at: '2026-11-09'\n",
+            "# AlN\n",
+        ))
+        report = validate_wiki(
+            self.root,
+            check_orphans=False,
+            check_evidence=True,
+            evidence_dir=self.evidence_dir,
+            strict_provenance=True,
+        )
+        self.assertTrue(report.ok)
+        self.assertEqual(report.errors, [])
+        self.assertEqual(report.warnings, [])
+        self.assertEqual(report.evidence.referenced_count, 0)
+        self.assertEqual(report.evidence.missing_count, 0)
+
+    def test_orphan_snapshots_with_and_without_reason(self):
+        # 1 orphan with reason
+        self._create_snapshot(
+            "https://example.com/orphan-with-reason.html",
+            meta_extra={"orphan_reason": "数値なしのため不採用"},
+        )
+        # 1 orphan without reason
+        self._create_snapshot(
+            "https://example.com/orphan-without-reason.html",
+        )
+
+        report = validate_wiki(
+            self.root,
+            check_evidence=True,
+            evidence_dir=self.evidence_dir,
+            strict_provenance=True,
+        )
+        self.assertTrue(report.ok)  # E2 is warning, not error even under strict_provenance
+        self.assertEqual(report.errors, [])
+        self.assertEqual(len(report.warnings), 1)
+        self.assertTrue(any("[E2]" in w and "orphan snapshot without orphan_reason" in w for w in report.warnings))
+
+        self.assertEqual(report.evidence.orphan_count, 2)
+        self.assertEqual(report.evidence.unexplained_orphan_count, 1)
+
+        orphans = {o["key"]: o for o in report.evidence.orphans}
+        from pat_okf_agent.wiki.verify import snapshot_key_for_url
+        key_with = snapshot_key_for_url("https://example.com/orphan-with-reason.html")
+        key_without = snapshot_key_for_url("https://example.com/orphan-without-reason.html")
+        self.assertEqual(orphans[key_with]["orphan_reason"], "数値なしのため不採用")
+        self.assertIsNone(orphans[key_without]["orphan_reason"])
+
+    def test_tombstone_and_stray_snapshot_files(self):
+        # Valid tombstone: no body, has deleted_at and orphan_reason
+        self._create_snapshot(
+            "https://example.com/tombstone.html",
+            body=None,
+            meta_extra={"deleted_at": "2026-11-09", "orphan_reason": "old obsolete spec"},
+        )
+        # Stray body file without .meta.json -> E3
+        stray_pdf = self.snapshots_dir / "stray_1234567890abcdef.pdf"
+        stray_pdf.write_bytes(b"%PDF-sample")
+
+        # Broken orphan .meta.json without body and without deleted_at -> E3
+        self._create_snapshot(
+            "https://example.com/broken-meta.html",
+            body=None,
+        )
+
+        report = validate_wiki(
+            self.root,
+            check_evidence=True,
+            evidence_dir=self.evidence_dir,
+        )
+        self.assertTrue(report.ok)
+        e3_warnings = [w for w in report.warnings if "[E3]" in w]
+        self.assertEqual(len(e3_warnings), 2)
+        self.assertTrue(any("stray_1234567890abcdef.pdf" in w for w in e3_warnings))
+        self.assertTrue(any("orphan snapshot metadata without body file" in w for w in e3_warnings))
+        self.assertEqual(report.evidence.tombstone_count, 1)
+
+    def test_nonexistent_evidence_dir_raises(self):
+        with self.assertRaises(FileNotFoundError):
+            validate_wiki(
+                self.root,
+                check_evidence=True,
+                evidence_dir=Path(self.tmp.name) / "nonexistent_dir",
+            )
 
 
 if __name__ == "__main__":

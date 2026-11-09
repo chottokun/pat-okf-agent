@@ -433,6 +433,47 @@ def _clean_space(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def snapshot_key_for_url(target_or_url: str | ClassifiedTarget) -> str:
+    """Return deterministic snapshot filename stem '<netloc_safe>_<sha1[:16]>' for a URL."""
+    classified = (
+        target_or_url
+        if isinstance(target_or_url, ClassifiedTarget)
+        else classify_target(target_or_url)
+    )
+    if classified.identifier_type != "url":
+        raise ValueError(
+            f"Expected URL target, got {classified.identifier_type}: {target_or_url!r}"
+        )
+    url = classified.identifier  # URL fragment stripped by classify_target
+    parsed = urllib.parse.urlsplit(url)
+    netloc_safe = _safe_name(parsed.netloc)
+    sha1_hash = hashlib.sha1(url.encode("utf-8")).hexdigest()[:16]
+    return f"{netloc_safe}_{sha1_hash}"
+
+
+def set_snapshot_orphan_reason(
+    cache_dir: Path | str, target_or_url: str | ClassifiedTarget, reason: str
+) -> Path:
+    """Record orphan/rejection reason into an existing snapshot's .meta.json file."""
+    if not reason or not reason.strip():
+        raise ValueError("orphan_reason must not be empty")
+    cleaned_reason = reason.strip()
+    key = snapshot_key_for_url(target_or_url)
+    snapshots_dir = Path(cache_dir) / "snapshots"
+    meta_path = snapshots_dir / f"{key}.meta.json"
+    if not meta_path.is_file():
+        raise SourceVerifyError(
+            f"Snapshot metadata not found for {target_or_url}: {meta_path}"
+        )
+    meta_json = json.loads(meta_path.read_text("utf-8"))
+    meta_json["orphan_reason"] = cleaned_reason
+    _atomic_write_bytes(
+        meta_path,
+        json.dumps(meta_json, indent=2, ensure_ascii=False),
+    )
+    return meta_path
+
+
 def _strip_jats_xml(raw: str) -> str:
     cleaned = re.sub(r"<[^>]+>", " ", raw)
     cleaned = html.unescape(cleaned)
@@ -1292,10 +1333,7 @@ class SourceVerifier:
             else classify_target(target)
         )
         url = classified.identifier
-        parsed = urllib.parse.urlsplit(url)
-        netloc_safe = _safe_name(parsed.netloc)
-        sha1_hash = hashlib.sha1(url.encode()).hexdigest()[:16]
-        key = f"{netloc_safe}_{sha1_hash}"
+        key = snapshot_key_for_url(classified)
 
         snapshots_dir = self.cache_dir / "snapshots"
         meta_path = snapshots_dir / f"{key}.meta.json"
