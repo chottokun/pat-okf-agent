@@ -31,9 +31,21 @@ from .synonyms import (
 )
 from .tooling import TOOL_SPECS, ToolError, wiki_stats
 from .validate import validate_wiki
-from .verify import SourceVerifier, SourceVerifyError
+from .verify import (
+    DEFAULT_CACHE_DIR,
+    SourceVerifier,
+    SourceVerifyError,
+    set_snapshot_orphan_reason,
+    snapshot_key_for_url,
+)
 
-__all__ = ["main", "SourceVerifier", "SourceVerifyError"]
+__all__ = [
+    "main",
+    "SourceVerifier",
+    "SourceVerifyError",
+    "set_snapshot_orphan_reason",
+    "snapshot_key_for_url",
+]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -72,7 +84,13 @@ def _parser() -> argparse.ArgumentParser:
     p_validate.add_argument("dir")
     p_validate.add_argument(
         "--strict-provenance", action="store_true",
-        help="promote provenance self-contradictions (P2, P4, P5) to errors")
+        help="promote provenance self-contradictions (P2, P4, P5, E1) to errors")
+    p_validate.add_argument(
+        "--check-evidence", action="store_true",
+        help="check evidence snapshot consistency and orphan snapshots")
+    p_validate.add_argument(
+        "--evidence-dir", default=None,
+        help="override evidence directory (default: data/external/source_verify)")
     p_validate.add_argument("--json", action="store_true")
 
     p_search = sub.add_parser("search", help="local full-text search")
@@ -246,6 +264,11 @@ def _parser() -> argparse.ArgumentParser:
     p_verify.add_argument("--no-rate-state", action="store_true", help="disable cross-process rate state lock")
     p_verify.add_argument("--offline", action="store_true", help="offline mode (cache only)")
     p_verify.add_argument("--refresh", action="store_true", help="ignore cache and re-fetch")
+    p_verify.add_argument(
+        "--orphan-reason",
+        default=None,
+        help="record orphan / rejection reason into snapshot metadata without re-fetching",
+    )
     p_verify.add_argument("--json", action="store_true", help="output JSON result")
 
     return parser
@@ -284,12 +307,29 @@ def _dispatch(args: argparse.Namespace) -> int:
         return 0
 
     if args.command == "validate":
-        report = validate_wiki(args.dir, strict_provenance=args.strict_provenance)
+        report = validate_wiki(
+            args.dir,
+            strict_provenance=args.strict_provenance,
+            check_evidence=args.check_evidence,
+            evidence_dir=args.evidence_dir,
+        )
         if args.json:
             print(json.dumps(report.as_dict(), ensure_ascii=False, indent=2))
         else:
             print(f"{'OK' if report.ok else 'FAILED'}: "
                   f"{report.concept_count} concept(s)")
+            if report.evidence:
+                ev = report.evidence
+                with_reason = ev.orphan_count - ev.unexplained_orphan_count
+                print(
+                    f"EVIDENCE: {ev.referenced_count} referenced ({ev.missing_count} missing), "
+                    f"{ev.orphan_count} orphan(s) ({with_reason} with reason, {ev.unexplained_orphan_count} unexplained), "
+                    f"{ev.tombstone_count} tombstone(s)"
+                )
+                for o in ev.orphans:
+                    if o.get("orphan_reason"):
+                        url_part = f" ({o['url']})" if o.get("url") else ""
+                        print(f"ORPHAN: {o['key']}{url_part} — {o['orphan_reason']}")
             for warning in report.warnings:
                 print(f"WARN: {warning}")
             for error in report.errors:
@@ -599,6 +639,19 @@ def _dispatch(args: argparse.Namespace) -> int:
         return 0
 
     if args.command == "verify-source":
+        if getattr(args, "orphan_reason", None) is not None:
+            cache_dir = Path(args.cache_dir or DEFAULT_CACHE_DIR)
+            meta_path = set_snapshot_orphan_reason(
+                cache_dir, args.target, args.orphan_reason
+            )
+            if args.json:
+                meta_json = json.loads(meta_path.read_text("utf-8"))
+                print(json.dumps(meta_json, indent=2, ensure_ascii=False))
+            else:
+                print(f"updated: {meta_path}")
+                print(f"orphan_reason: {args.orphan_reason.strip()}")
+            return 0
+
         verifier = SourceVerifier(
             cache_dir=args.cache_dir,
             offline=args.offline,

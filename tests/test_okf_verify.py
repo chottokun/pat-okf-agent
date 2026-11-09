@@ -17,6 +17,8 @@ from pat_okf_agent.wiki.verify import (
     VerificationChecks,
     VerificationResult,
     classify_target,
+    set_snapshot_orphan_reason,
+    snapshot_key_for_url,
 )
 
 
@@ -1091,6 +1093,81 @@ class TestUrlVerification(unittest.TestCase):
 
         # Strictly Read-Only: .extracted.txt should NOT be created lazily
         self.assertFalse(extracted_file := extracted_path.exists())
+
+
+class TestSnapshotKeyAndOrphanReason(unittest.TestCase):
+    def test_snapshot_key_for_url(self) -> None:
+        key1 = snapshot_key_for_url("https://example.com/a.html#frag")
+        key2 = snapshot_key_for_url("web:https://example.com/a.html")
+        self.assertEqual(key1, key2)
+        self.assertTrue(key1.startswith("example.com_"))
+        # 16-hex suffix
+        suffix = key1.split("_", 1)[1]
+        self.assertEqual(len(suffix), 16)
+
+    def test_snapshot_key_for_url_datasheet(self) -> None:
+        key = snapshot_key_for_url("datasheet:https://example.com/spec.pdf")
+        self.assertTrue(key.startswith("example.com_"))
+
+    def test_snapshot_key_for_url_non_url_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            snapshot_key_for_url("10.1111/jace.14748")
+        with self.assertRaises(ValueError):
+            snapshot_key_for_url("paper:10.1111/jace.14748")
+        with self.assertRaises(ValueError):
+            snapshot_key_for_url("arXiv:2401.12345")
+        with self.assertRaises(ValueError):
+            snapshot_key_for_url("preprint:2401.12345")
+
+    def test_set_snapshot_orphan_reason(self) -> None:
+        import tempfile
+        import json
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_dir = Path(tmpdir)
+            snapshots_dir = cache_dir / "snapshots"
+            snapshots_dir.mkdir(parents=True)
+
+            url = "https://example.com/ceramic.html"
+            key = snapshot_key_for_url(url)
+            meta_path = snapshots_dir / f"{key}.meta.json"
+            body_path = snapshots_dir / f"{key}.html"
+
+            body_path.write_bytes(b"<html>ceramic</html>")
+            meta_payload = {
+                "url": url,
+                "sha256": "sha256:123456",
+                "retrieved_at": "2026-11-09",
+                "title": "Ceramic",
+            }
+            meta_path.write_text(json.dumps(meta_payload, indent=2), encoding="utf-8")
+
+            # Set orphan reason
+            ret_path = set_snapshot_orphan_reason(
+                cache_dir, url, "  数値なし（定性的記述のみ）のため不採用  "
+            )
+            self.assertEqual(ret_path, meta_path)
+
+            updated = json.loads(meta_path.read_text("utf-8"))
+            self.assertEqual(updated["orphan_reason"], "数値なし（定性的記述のみ）のため不採用")
+            self.assertEqual(updated["sha256"], "sha256:123456")
+            self.assertEqual(updated["title"], "Ceramic")
+            self.assertEqual(body_path.read_bytes(), b"<html>ceramic</html>")
+
+    def test_set_snapshot_orphan_reason_missing_meta_raises(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertRaises(SourceVerifyError):
+                set_snapshot_orphan_reason(
+                    Path(tmpdir), "https://example.com/nonexistent.html", "some reason"
+                )
+
+    def test_set_snapshot_orphan_reason_empty_reason_raises(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertRaises(ValueError):
+                set_snapshot_orphan_reason(
+                    Path(tmpdir), "https://example.com/item.html", "   "
+                )
 
 
 if __name__ == "__main__":

@@ -520,6 +520,133 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code_inv, 2)
         self.assertIn("error:", err_inv)
 
+    def test_verify_source_orphan_reason(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_dir = Path(tmpdir)
+            snapshots_dir = cache_dir / "snapshots"
+            snapshots_dir.mkdir(parents=True)
+
+            url = "https://example.com/item.html"
+            from pat_okf_agent.wiki.verify import snapshot_key_for_url
+            key = snapshot_key_for_url(url)
+            meta_path = snapshots_dir / f"{key}.meta.json"
+            meta_path.write_text(json.dumps({"url": url, "sha256": "abc"}, indent=2), encoding="utf-8")
+
+            # Update orphan reason via CLI
+            code, out, err = self.run_cli(
+                "verify-source", url, "--orphan-reason", "数値なしのため不採用",
+                "--cache-dir", str(cache_dir), "--json"
+            )
+            self.assertEqual(code, 0)
+            data = json.loads(out)
+            self.assertEqual(data.get("orphan_reason"), "数値なしのため不採用")
+
+            # Missing meta raises SourceVerifyError -> exit 2
+            code_missing, out_m, err_m = self.run_cli(
+                "verify-source", "https://example.com/missing.html",
+                "--orphan-reason", "reason", "--cache-dir", str(cache_dir)
+            )
+            self.assertEqual(code_missing, 2)
+            self.assertIn("error:", err_m)
+
+    def test_validate_check_evidence_cli(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wiki_dir = Path(tmpdir) / "wiki"
+            wiki_dir.mkdir()
+            write(wiki_dir, "index.md", "# Index\n")
+            url = "https://example.com/aln.html"
+            write(wiki_dir, "concepts/aln.md", node(
+                "type: Concept\n"
+                "title: 'AlN'\n"
+                "basis: external\n"
+                f"sources: ['web:{url} retrieved=2026-11-09']\n"
+                "verified_at: '2026-11-09'\n",
+                "# AlN\n",
+            ))
+
+            evidence_dir = Path(tmpdir) / "evidence"
+            snapshots_dir = evidence_dir / "snapshots"
+            snapshots_dir.mkdir(parents=True)
+
+            from pat_okf_agent.wiki.verify import snapshot_key_for_url
+            key = snapshot_key_for_url(url)
+            (snapshots_dir / f"{key}.html").write_bytes(b"content")
+            (snapshots_dir / f"{key}.meta.json").write_text(
+                json.dumps({"url": url, "sha256": "sha256:123"}, indent=2), encoding="utf-8"
+            )
+
+            # Orphan with reason
+            orphan_url = "https://example.com/orphan.html"
+            o_key = snapshot_key_for_url(orphan_url)
+            (snapshots_dir / f"{o_key}.html").write_bytes(b"orphan body")
+            (snapshots_dir / f"{o_key}.meta.json").write_text(
+                json.dumps({
+                    "url": orphan_url,
+                    "sha256": "sha256:456",
+                    "orphan_reason": "数値なしのため不採用",
+                }, indent=2),
+                encoding="utf-8",
+            )
+
+            # 1. JSON mode
+            code, out, err = self.run_cli(
+                "validate", str(wiki_dir),
+                "--check-evidence",
+                "--evidence-dir", str(evidence_dir),
+                "--json",
+            )
+            self.assertEqual(code, 0, f"err: {err}")
+            data = json.loads(out)
+            self.assertTrue(data["ok"])
+            self.assertIn("evidence", data)
+            ev = data["evidence"]
+            self.assertEqual(ev["referenced_count"], 1)
+            self.assertEqual(ev["missing_count"], 0)
+            self.assertEqual(ev["orphan_count"], 1)
+            self.assertEqual(ev["unexplained_orphan_count"], 0)
+
+            # 2. Text output mode
+            code_txt, out_txt, _ = self.run_cli(
+                "validate", str(wiki_dir),
+                "--check-evidence",
+                "--evidence-dir", str(evidence_dir),
+            )
+            self.assertEqual(code_txt, 0)
+            self.assertIn("OK: 1 concept(s)", out_txt)
+            self.assertIn("EVIDENCE: 1 referenced (0 missing), 1 orphan(s) (1 with reason, 0 unexplained), 0 tombstone(s)", out_txt)
+            self.assertIn(f"ORPHAN: {o_key} ({orphan_url}) — 数値なしのため不採用", out_txt)
+
+            # 3. Missing snapshot with --strict-provenance -> exit 1
+            missing_wiki = Path(tmpdir) / "missing_wiki"
+            missing_wiki.mkdir()
+            write(missing_wiki, "index.md", "# Index\n")
+            write(missing_wiki, "concepts/missing.md", node(
+                "type: Concept\n"
+                "title: 'Missing'\n"
+                "basis: external\n"
+                "sources: ['web:https://example.com/not-cached.html retrieved=2026-11-09']\n"
+                "verified_at: '2026-11-09'\n",
+                "# Missing\n",
+            ))
+            code_fail, out_fail, _ = self.run_cli(
+                "validate", str(missing_wiki),
+                "--check-evidence",
+                "--evidence-dir", str(evidence_dir),
+                "--strict-provenance",
+            )
+            self.assertEqual(code_fail, 1)
+            self.assertIn("FAILED:", out_fail)
+            self.assertIn("[E1] missing snapshot metadata", out_fail)
+
+            # 4. Nonexistent evidence-dir -> exit 2
+            code_err, out_err, err_err = self.run_cli(
+                "validate", str(wiki_dir),
+                "--check-evidence",
+                "--evidence-dir", str(Path(tmpdir) / "no_such_evidence_dir"),
+            )
+            self.assertEqual(code_err, 2)
+            self.assertIn("error:", err_err)
+
 
 if __name__ == "__main__":
     unittest.main()

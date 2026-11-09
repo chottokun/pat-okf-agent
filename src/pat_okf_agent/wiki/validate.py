@@ -1,6 +1,7 @@
 """Structural validation for an OKF wiki."""
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import date
@@ -27,15 +28,18 @@ from .model import (
     resolve_link,
     validate_meta,
 )
+from .verify import classify_target, snapshot_key_for_url
 
 __all__ = [
+    "EvidenceReport",
     "STRICT_PROVENANCE_RULES",
     "ValidationReport",
+    "validate_evidence",
     "validate_provenance",
     "validate_wiki",
 ]
 
-STRICT_PROVENANCE_RULES = frozenset({"P2", "P4", "P5"})
+STRICT_PROVENANCE_RULES = frozenset({"P2", "P4", "P5", "E1"})
 
 _UNVERIFIED_ALERT_START_RE = re.compile(
     r"^>\s*\[!NOTE\]\s*(?:一般知識（未検証）|General Knowledge \(Unverified\))\s*$",
@@ -66,22 +70,52 @@ _UNIT_NUMBER_RE = re.compile(
 
 
 @dataclass
+class EvidenceReport:
+    evidence_dir: str
+    referenced_count: int = 0
+    missing_count: int = 0
+    orphan_count: int = 0
+    unexplained_orphan_count: int = 0
+    tombstone_count: int = 0
+    missing: list[dict[str, Any]] = field(default_factory=list)
+    orphans: list[dict[str, Any]] = field(default_factory=list)
+    tombstones: list[dict[str, Any]] = field(default_factory=list)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "evidence_dir": self.evidence_dir,
+            "referenced_count": self.referenced_count,
+            "missing_count": self.missing_count,
+            "orphan_count": self.orphan_count,
+            "unexplained_orphan_count": self.unexplained_orphan_count,
+            "tombstone_count": self.tombstone_count,
+            "missing": list(self.missing),
+            "orphans": list(self.orphans),
+            "tombstones": list(self.tombstones),
+        }
+
+
+@dataclass
 class ValidationReport:
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     concept_count: int = 0
+    evidence: EvidenceReport | None = None
 
     @property
     def ok(self) -> bool:
         return not self.errors
 
     def as_dict(self) -> dict:
-        return {
+        d: dict[str, Any] = {
             "ok": self.ok,
             "errors": list(self.errors),
             "warnings": list(self.warnings),
             "concept_count": self.concept_count,
         }
+        if self.evidence is not None:
+            d["evidence"] = self.evidence.as_dict()
+        return d
 
 
 def _is_stub(meta: dict[str, Any]) -> bool:
@@ -420,12 +454,193 @@ def validate_provenance(
     return warnings
 
 
+def validate_evidence(
+    parsed: dict[str, tuple[dict[str, Any], str, list[Any], int]],
+    evidence_dir: Path | str,
+) -> tuple[EvidenceReport, list[tuple[str, str]]]:
+    """Validate snapshot evidence files corresponding to URL sources in parsed notes."""
+    evidence_path = Path(evidence_dir)
+    if not evidence_path.exists() or not evidence_path.is_dir():
+        raise FileNotFoundError(f"evidence directory does not exist: {evidence_path}")
+
+    snapshots_dir = evidence_path / "snapshots"
+    meta_files: dict[str, Path] = {}
+    body_files: dict[str, list[Path]] = {}
+    extracted_files: dict[str, Path] = {}
+
+    if snapshots_dir.is_dir():
+        for p in snapshots_dir.iterdir():
+            if not p.is_file() or p.name.endswith(".tmp"):
+                continue
+            if p.name.endswith(".meta.json"):
+                k = p.name[:-len(".meta.json")]
+                meta_files[k] = p
+            elif p.name.endswith(".extracted.txt"):
+                k = p.name[:-len(".extracted.txt")]
+                extracted_files[k] = p
+            else:
+                k = p.name.rsplit(".", 1)[0]
+                body_files.setdefault(k, []).append(p)
+
+    warnings: list[tuple[str, str]] = []
+    missing: list[dict[str, Any]] = []
+
+    # Map snapshot key -> list of (rel, entry)
+    referenced_by: dict[str, list[tuple[str, SourceEntry]]] = {}
+
+    for rel, entry_tuple in sorted(parsed.items()):
+        meta = entry_tuple[0]
+        raw_sources = meta.get("sources")
+        if not isinstance(raw_sources, list):
+            continue
+        for s in raw_sources:
+            if not isinstance(s, str):
+                continue
+            try:
+                src_entry = parse_source_entry(s)
+                classified = classify_target(src_entry.id, kind=src_entry.kind)
+            except ValueError:
+                continue
+            if classified.identifier_type != "url":
+                continue
+            key = snapshot_key_for_url(classified)
+            referenced_by.setdefault(key, []).append((rel, src_entry))
+
+            # E1 Checks
+            meta_path = meta_files.get(key)
+            if meta_path is None:
+                warnings.append((
+                    "E1",
+                    f"{rel}: [E1] missing snapshot metadata for {src_entry.kind}:{src_entry.id} (expected snapshots/{key}.meta.json)",
+                ))
+                missing.append({
+                    "rel": rel,
+                    "source": f"{src_entry.kind}:{src_entry.id}",
+                    "key": key,
+                    "reason": "missing_metadata",
+                    "expected_meta_path": str(snapshots_dir / f"{key}.meta.json"),
+                })
+            else:
+                try:
+                    meta_json = json.loads(meta_path.read_text("utf-8"))
+                except Exception:
+                    meta_json = {}
+                deleted_at = meta_json.get("deleted_at")
+                if deleted_at and str(deleted_at).strip():
+                    warnings.append((
+                        "E1",
+                        f"{rel}: [E1] source {src_entry.kind}:{src_entry.id} references tombstoned snapshot (snapshots/{key}.meta.json, deleted_at={deleted_at})",
+                    ))
+                    missing.append({
+                        "rel": rel,
+                        "source": f"{src_entry.kind}:{src_entry.id}",
+                        "key": key,
+                        "reason": "tombstone_referenced",
+                        "deleted_at": str(deleted_at).strip(),
+                        "meta_path": str(meta_path),
+                    })
+                elif key not in body_files or not body_files[key]:
+                    warnings.append((
+                        "E1",
+                        f"{rel}: [E1] missing snapshot body file for {src_entry.kind}:{src_entry.id} (expected snapshots/{key}.<ext>)",
+                    ))
+                    missing.append({
+                        "rel": rel,
+                        "source": f"{src_entry.kind}:{src_entry.id}",
+                        "key": key,
+                        "reason": "missing_body",
+                        "expected_body_pattern": str(snapshots_dir / f"{key}.<ext>"),
+                    })
+
+    # Orphans and tombstones (non-referenced snapshots)
+    orphans: list[dict[str, Any]] = []
+    tombstones: list[dict[str, Any]] = []
+
+    for key, meta_path in sorted(meta_files.items()):
+        if key in referenced_by:
+            continue
+        try:
+            meta_json = json.loads(meta_path.read_text("utf-8"))
+        except Exception:
+            meta_json = {}
+
+        url = meta_json.get("url", "")
+        deleted_at = meta_json.get("deleted_at")
+        orphan_reason = meta_json.get("orphan_reason")
+        retrieved_at = meta_json.get("retrieved_at")
+        sha256 = meta_json.get("sha256")
+        has_body = key in body_files and bool(body_files[key])
+
+        if has_body:
+            clean_reason = orphan_reason.strip() if isinstance(orphan_reason, str) and orphan_reason.strip() else None
+            orphans.append({
+                "key": key,
+                "url": url,
+                "retrieved_at": retrieved_at,
+                "sha256": sha256,
+                "orphan_reason": clean_reason,
+                "meta_path": str(meta_path),
+            })
+            if clean_reason is None:
+                warnings.append((
+                    "E2",
+                    f"snapshots/{key}.meta.json: [E2] orphan snapshot without orphan_reason ({url})",
+                ))
+        else:
+            if deleted_at and str(deleted_at).strip():
+                clean_reason = orphan_reason.strip() if isinstance(orphan_reason, str) and orphan_reason.strip() else None
+                tombstones.append({
+                    "key": key,
+                    "url": url,
+                    "deleted_at": str(deleted_at).strip(),
+                    "orphan_reason": clean_reason,
+                    "meta_path": str(meta_path),
+                })
+            else:
+                warnings.append((
+                    "E3",
+                    f"snapshots/{key}.meta.json: [E3] orphan snapshot metadata without body file",
+                ))
+
+    # Stray files in snapshots_dir (E3)
+    for key, b_list in sorted(body_files.items()):
+        if key not in meta_files:
+            for b_path in sorted(b_list):
+                warnings.append((
+                    "E3",
+                    f"snapshots/{b_path.name}: [E3] snapshot file without metadata (.meta.json missing)",
+                ))
+    for key, ext_path in sorted(extracted_files.items()):
+        if key not in meta_files:
+            warnings.append((
+                "E3",
+                f"snapshots/{ext_path.name}: [E3] snapshot file without metadata (.meta.json missing)",
+            ))
+
+    unexplained_orphan_count = sum(1 for o in orphans if not o.get("orphan_reason"))
+
+    report = EvidenceReport(
+        evidence_dir=str(evidence_path),
+        referenced_count=len(referenced_by),
+        missing_count=len(missing),
+        orphan_count=len(orphans),
+        unexplained_orphan_count=unexplained_orphan_count,
+        tombstone_count=len(tombstones),
+        missing=missing,
+        orphans=orphans,
+        tombstones=tombstones,
+    )
+    return report, warnings
+
+
 def validate_wiki(
     root: str | Path,
     *,
     check_orphans: bool = True,
     today: date | None = None,
     strict_provenance: bool = False,
+    check_evidence: bool = False,
+    evidence_dir: str | Path | None = None,
 ) -> ValidationReport:
     root = Path(root)
     report = ValidationReport()
@@ -492,5 +707,16 @@ def validate_wiki(
             report.errors.append(message)
         else:
             report.warnings.append(message)
+
+    # Pass 3: evidence checks
+    if check_evidence:
+        ev_dir = Path(evidence_dir or "data/external/source_verify")
+        ev_report, ev_warnings = validate_evidence(parsed, ev_dir)
+        report.evidence = ev_report
+        for rule_id, message in ev_warnings:
+            if strict_provenance and rule_id in STRICT_PROVENANCE_RULES:
+                report.errors.append(message)
+            else:
+                report.warnings.append(message)
 
     return report
