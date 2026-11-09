@@ -384,8 +384,8 @@ class _HtmlSnapshotParser(HTMLParser):
         return _clean_space(" ".join(self.text_parts))
 
 
-def _extract_pdf_text(data: bytes) -> tuple[str, bool]:
-    """Extract text from PDF using pypdf if available, returning (text, success)."""
+def _extract_pdf_text(data: bytes) -> tuple[str, bool, str]:
+    """Extract text from PDF using pypdf if available, returning (text, success, extractor)."""
     try:
         import pypdf
 
@@ -395,14 +395,28 @@ def _extract_pdf_text(data: bytes) -> tuple[str, bool]:
             t = page.extract_text()
             if t:
                 parts.append(t)
-        return _clean_space(" ".join(parts)), True
+        return _clean_space(" ".join(parts)), True, "pypdf"
     except ImportError:
         # Fallback: extract ASCII-like strings from binary
         ascii_text = re.findall(rb"[A-Za-z0-9 .,:;!?/\-]{4,}", data)
         text_str = " ".join(b.decode("ascii", errors="ignore") for b in ascii_text)
-        return _clean_space(text_str), False
+        return _clean_space(text_str), False, "ascii_fallback"
     except Exception:
-        return "", False
+        return "", False, "pypdf_error"
+
+
+def _extract_response_url(resp: Any, default_url: str) -> str:
+    if hasattr(resp, "geturl") and callable(resp.geturl):
+        try:
+            u = resp.geturl()
+            if u:
+                return str(u)
+        except Exception:
+            pass
+    u = getattr(resp, "url", None)
+    if u:
+        return str(u)
+    return default_url
 
 
 def _atomic_write_bytes(path: Path, data: bytes | str) -> None:
@@ -565,6 +579,7 @@ class SourceVerifier:
         self.retries = max(0, int(retries))
         self.timeout = float(timeout)
         self.default_sleep = sleep
+        self._last_final_url: str = ""
 
         state_path = None
         if not no_rate_state:
@@ -614,6 +629,8 @@ class SourceVerifier:
                 else:
                     resp = urllib.request.urlopen(req, timeout=self.timeout)
 
+                self._last_final_url = _extract_response_url(resp, url)
+
                 with resp:
                     body = resp.read()
                     status = getattr(resp, "status", 200)
@@ -622,6 +639,7 @@ class SourceVerifier:
                         resp_headers = {k: v for k, v in resp.headers.items()}
                     return status, resp_headers, body
             except urllib.error.HTTPError as exc:
+                self._last_final_url = _extract_response_url(exc, url)
                 status = exc.code
                 body = exc.read() if hasattr(exc, "read") else b""
                 resp_headers = {k: v for k, v in exc.headers.items()} if exc.headers else {}
@@ -1310,25 +1328,37 @@ class SourceVerifier:
                 except (ValueError, TypeError):
                     pass
 
-            # Find companion file
+            # Find companion file (excluding .meta.json, .extracted.txt, and .tmp)
             companions = [
                 p
                 for p in snapshots_dir.glob(f"{key}.*")
-                if not p.name.endswith(".meta.json") and not p.name.endswith(".tmp")
+                if not p.name.endswith(".meta.json")
+                and not p.name.endswith(".extracted.txt")
+                and not p.name.endswith(".tmp")
             ]
             if not companions:
                 raise SourceVerifyError(f"Missing companion snapshot body for {meta_path}")
             body_file = companions[0]
             snapshot_path = str(body_file)
-            body_bytes = body_file.read_bytes()
 
-            if body_file.suffix.lower() == ".pdf":
-                is_pdf = True
-                text, pdf_ok = _extract_pdf_text(body_bytes)
+            extracted_path = snapshots_dir / f"{key}.extracted.txt"
+            if extracted_path.exists():
+                text = extracted_path.read_text("utf-8")
+                is_pdf = (body_file.suffix.lower() == ".pdf")
+                ext_name = meta_json.get("extractor")
+                if ext_name in ("ascii_fallback", "pypdf_error"):
+                    pdf_ok = False
+                else:
+                    pdf_ok = True
             else:
-                parser = _HtmlSnapshotParser()
-                parser.feed(body_bytes.decode("utf-8", errors="replace"))
-                text = parser.get_visible_text()
+                body_bytes = body_file.read_bytes()
+                if body_file.suffix.lower() == ".pdf":
+                    is_pdf = True
+                    text, pdf_ok, *_ = _extract_pdf_text(body_bytes)
+                else:
+                    parser = _HtmlSnapshotParser()
+                    parser.feed(body_bytes.decode("utf-8", errors="replace"))
+                    text = parser.get_visible_text()
         else:
             status, resp_headers, body = self._http_request(
                 url,
@@ -1404,7 +1434,7 @@ class SourceVerifier:
                 extracted_issued = None
                 title = None
                 year = None
-                text, pdf_ok = _extract_pdf_text(body)
+                text, pdf_ok, extractor = _extract_pdf_text(body)
             else:
                 parser = _HtmlSnapshotParser()
                 parser.feed(body.decode("utf-8", errors="replace"))
@@ -1412,14 +1442,22 @@ class SourceVerifier:
                 extracted_publisher = parser.get_publisher()
                 extracted_issued, year = parser.get_date()
                 text = parser.get_visible_text()
+                extractor = "html.parser"
 
             body_path = snapshots_dir / f"{key}.{ext}"
             _atomic_write_bytes(body_path, body)
             snapshot_path = str(body_path)
 
+            extracted_path = snapshots_dir / f"{key}.extracted.txt"
+            _atomic_write_bytes(extracted_path, text)
+            extracted_bytes = text.encode("utf-8")
+            extracted_sha256 = f"sha256:{hashlib.sha256(extracted_bytes).hexdigest()}"
+
             meta_payload = {
                 "url": url,
-                "final_url": url,
+                "final_url": self._last_final_url or url,
+                "extractor": extractor,
+                "extracted_sha256": extracted_sha256,
                 "status": status,
                 "content_type": content_type or "application/octet-stream",
                 "content_length": len(body),
