@@ -214,10 +214,15 @@ class FakeResponse:
         body: bytes | str,
         status: int = 200,
         headers: dict[str, str] | None = None,
+        url: str | None = None,
     ):
         self._body = body.encode() if isinstance(body, str) else body
         self.status = status
         self.headers = headers or {}
+        self.url = url
+
+    def geturl(self) -> str | None:
+        return self.url
 
     def read(self, n: int = -1) -> bytes:
         if n == -1 or n >= len(self._body):
@@ -252,6 +257,7 @@ class FakeTransport:
         raise AssertionError(f"unexpected URL: {request.full_url}")
 
 
+import hashlib
 import json
 import tempfile
 from pathlib import Path
@@ -755,9 +761,24 @@ class TestUrlVerification(unittest.TestCase):
         self.assertTrue(Path(res.evidence.snapshot_path).exists())
         self.assertTrue(Path(res.evidence.meta_path).exists())
 
+        # Check extracted text sidecar
+        extracted_path = Path(res.evidence.snapshot_path).with_name(
+            f"{Path(res.evidence.snapshot_path).stem}.extracted.txt"
+        )
+        self.assertTrue(extracted_path.exists())
+        extracted_text = extracted_path.read_text("utf-8")
+        self.assertIn("230 W/mK", extracted_text)
+        self.assertNotIn("hidden script text", extracted_text)
+
         # Check .meta.json sidecar content
         meta_json = json.loads(Path(res.evidence.meta_path).read_text("utf-8"))
         self.assertEqual(meta_json["url"], "https://example.com/aln-report.html")
+        self.assertEqual(meta_json["final_url"], "https://example.com/aln-report.html")
+        self.assertEqual(meta_json["extractor"], "html.parser")
+        self.assertEqual(
+            meta_json["extracted_sha256"],
+            f"sha256:{hashlib.sha256(extracted_text.encode('utf-8')).hexdigest()}",
+        )
         self.assertEqual(meta_json["extracted_publisher"], "Example Institute of Ceramics")
         self.assertEqual(meta_json["extracted_issued"], "2024-05-01")
         self.assertEqual(meta_json["sha256"], res.evidence.sha256)
@@ -917,6 +938,159 @@ class TestUrlVerification(unittest.TestCase):
             self.assertFalse(res2.ok)
             self.assertEqual(res2.status, "unverified")
             self.assertTrue(any("pypdf" in w for w in res2.warnings))
+
+    def test_url_redirect_records_true_final_url(self) -> None:
+        transport = FakeTransport([
+            ("example.com/files/4731/download", FakeResponse(
+                HTML_SAMPLE,
+                headers={"Content-Type": "text/html; charset=utf-8"},
+                url="https://cdn.example.com/docs/hexoloy-datasheet.html",
+            )),
+        ])
+        verifier = self._make_verifier(transport)
+        res = verifier.verify("https://example.com/files/4731/download")
+        self.assertTrue(res.ok)
+        meta_json = json.loads(Path(res.evidence.meta_path).read_text("utf-8"))
+        self.assertEqual(meta_json["url"], "https://example.com/files/4731/download")
+        self.assertEqual(meta_json["final_url"], "https://cdn.example.com/docs/hexoloy-datasheet.html")
+
+    def test_url_pdf_extracted_sidecar_with_and_without_pypdf(self) -> None:
+        import sys
+        from unittest.mock import MagicMock, patch
+
+        pdf_bytes = b"%PDF-1.4 dummy binary content"
+        transport1 = FakeTransport([
+            ("example.com/pypdf.pdf", FakeResponse(
+                pdf_bytes,
+                headers={"Content-Type": "application/pdf"}
+            )),
+        ])
+        v1 = self._make_verifier(transport1)
+        mock_pypdf = MagicMock()
+        mock_reader = MagicMock()
+        mock_page = MagicMock()
+        mock_page.extract_text.return_value = "Sample PDF extracted text 150 W/mK"
+        mock_reader.pages = [mock_page]
+        mock_pypdf.PdfReader.return_value = mock_reader
+
+        with patch.dict(sys.modules, {"pypdf": mock_pypdf}):
+            res1 = v1.verify("https://example.com/pypdf.pdf")
+            self.assertTrue(res1.ok)
+            meta1 = json.loads(Path(res1.evidence.meta_path).read_text("utf-8"))
+            self.assertEqual(meta1["extractor"], "pypdf")
+            extracted_path1 = Path(res1.evidence.snapshot_path).with_name(
+                f"{Path(res1.evidence.snapshot_path).stem}.extracted.txt"
+            )
+            self.assertTrue(extracted_path1.exists())
+            txt1 = extracted_path1.read_text("utf-8")
+            self.assertEqual(txt1, "Sample PDF extracted text 150 W/mK")
+            self.assertEqual(
+                meta1["extracted_sha256"],
+                f"sha256:{hashlib.sha256(txt1.encode('utf-8')).hexdigest()}",
+            )
+
+        # Without pypdf
+        pdf_ascii_bytes = b"%PDF-1.4 sample non-compressed text 150 W/mK %%EOF"
+        transport2 = FakeTransport([
+            ("example.com/fallback.pdf", FakeResponse(
+                pdf_ascii_bytes,
+                headers={"Content-Type": "application/pdf"}
+            )),
+        ])
+        v2 = self._make_verifier(transport2)
+        with patch.dict(sys.modules, {"pypdf": None}):
+            res2 = v2.verify("https://example.com/fallback.pdf")
+            self.assertTrue(res2.ok)
+            meta2 = json.loads(Path(res2.evidence.meta_path).read_text("utf-8"))
+            self.assertEqual(meta2["extractor"], "ascii_fallback")
+            extracted_path2 = Path(res2.evidence.snapshot_path).with_name(
+                f"{Path(res2.evidence.snapshot_path).stem}.extracted.txt"
+            )
+            self.assertTrue(extracted_path2.exists())
+            txt2 = extracted_path2.read_text("utf-8")
+            self.assertIn("150 W/mK", txt2)
+            self.assertEqual(
+                meta2["extracted_sha256"],
+                f"sha256:{hashlib.sha256(txt2.encode('utf-8')).hexdigest()}",
+            )
+
+    def test_url_cache_hit_uses_saved_extracted_txt_without_reparse(self) -> None:
+        import sys
+        from unittest.mock import MagicMock, patch
+
+        pdf_bytes = b"%PDF-1.4 dummy binary content"
+        transport = FakeTransport([
+            ("example.com/doc.pdf", FakeResponse(
+                pdf_bytes,
+                headers={"Content-Type": "application/pdf"}
+            )),
+        ])
+        mock_pypdf = MagicMock()
+        mock_reader = MagicMock()
+        mock_page = MagicMock()
+        mock_page.extract_text.return_value = "Initial extracted text"
+        mock_reader.pages = [mock_page]
+        mock_pypdf.PdfReader.return_value = mock_reader
+
+        v1 = self._make_verifier(transport)
+        with patch.dict(sys.modules, {"pypdf": mock_pypdf}):
+            res1 = v1.verify("https://example.com/doc.pdf")
+            self.assertTrue(res1.ok)
+            extracted_path = Path(res1.evidence.snapshot_path).with_name(
+                f"{Path(res1.evidence.snapshot_path).stem}.extracted.txt"
+            )
+            self.assertTrue(extracted_path.exists())
+
+        # Modify .extracted.txt to include new claim
+        extracted_path.write_text("cached extracted text with 999 W/mK", encoding="utf-8")
+
+        # 2nd call: offline, pypdf is None (not installed), check_claim=["999 W/mK"]
+        v2 = self._make_verifier(FakeTransport([]), offline=True)
+        with patch.dict(sys.modules, {"pypdf": None}):
+            res2 = v2.verify("https://example.com/doc.pdf", check_claim=["999 W/mK"])
+            self.assertTrue(res2.ok)
+            self.assertEqual(res2.status, "verified")
+            self.assertTrue(res2.evidence.cached)
+            self.assertTrue(res2.evidence.snapshot_path.endswith(".pdf"))
+            self.assertFalse(res2.evidence.snapshot_path.endswith(".extracted.txt"))
+            self.assertIn("999 W/mK", res2.metadata.abstract or "")
+
+    def test_url_legacy_snapshot_without_extracted_txt_fallback(self) -> None:
+        transport = FakeTransport([
+            ("example.com/legacy-doc.html", FakeResponse(
+                HTML_SAMPLE,
+                headers={"Content-Type": "text/html; charset=utf-8"},
+            )),
+        ])
+        v_init = self._make_verifier(transport)
+        res_init = v_init.verify("https://example.com/legacy-doc.html")
+        self.assertTrue(res_init.ok)
+
+        # Revert to legacy snapshot: delete .extracted.txt and strip new fields from .meta.json
+        meta_path = Path(res_init.evidence.meta_path)
+        extracted_path = Path(res_init.evidence.snapshot_path).with_name(
+            f"{Path(res_init.evidence.snapshot_path).stem}.extracted.txt"
+        )
+        self.assertTrue(extracted_path.exists())
+        extracted_path.unlink()
+        self.assertFalse(extracted_path.exists())
+
+        meta_json = json.loads(meta_path.read_text("utf-8"))
+        meta_json.pop("extractor", None)
+        meta_json.pop("extracted_sha256", None)
+        meta_path.write_text(json.dumps(meta_json, indent=2), encoding="utf-8")
+
+        # Now test offline cache hit on legacy snapshot
+        v = self._make_verifier(FakeTransport([]), offline=True)
+        res = v.verify("https://example.com/legacy-doc.html", check_claim=["230 W/mK"])
+        self.assertTrue(res.ok)
+        self.assertEqual(res.status, "verified")
+        self.assertTrue(res.evidence.cached)
+        self.assertEqual(res.metadata.title, "AlN Technical Evaluation 2024")
+        self.assertIn("230 W/mK", res.metadata.abstract or "")
+
+        # Strictly Read-Only: .extracted.txt should NOT be created lazily
+        self.assertFalse(extracted_file := extracted_path.exists())
 
 
 if __name__ == "__main__":
