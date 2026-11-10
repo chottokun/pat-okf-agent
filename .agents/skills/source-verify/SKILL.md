@@ -28,6 +28,19 @@ Use this skill when gathering or validating external sources (DOI, arXiv, datash
 3. **arXiv ID**: Preprints checked against arXiv Atom API. Version of Record DOI is recorded if present.
 4. **Identifier-less Web URLs (Tier 4 / Datasheets)**: Official manufacturer datasheets, product pages, or university bulletins without DOI. Captured with HTML/PDF snapshot, SHA-256 sidecar, and publisher extraction. Recorded as `kind=web` (or `datasheet`, `product-page`).
 
+## Discovery & Pre-Filtering Discipline
+
+Filter candidates before fetching to avoid wasting rate quotas and creating orphan snapshots:
+
+1. **Pre-Fetch Material-Class Check**: Before running `okf verify-source <url>` or fetching a DOI, verify from the search title/snippet that the candidate matches the exact material or device class of the concept (e.g. Cu sintering vs. Ag sintering; bulk W-Cu alloy vs. W-coated diamond/Cu; electronics TIM vs. building/battery PCM). Do not fetch known mismatches.
+2. **Crossref Discovery Pre-Filtering**: When querying Crossref, prefer `filter=type:journal-article` (and `type:proceedings-article` where apt). Up front, skip component DOIs with supplemental suffixes (e.g. `.s001`, `.s002`), authorless magazine/news items, and preprints/dissertations from SSRN or thesis repositories as non-adoptable by default.
+3. **Web Discovery (PDF-First & Fallback)**:
+   - Prefer direct manufacturer datasheet PDFs (often on a CDN, search via `filetype:pdf datasheet <material> "thermal conductivity"`) over JS-rendered product landing pages that frequently lack extractable data.
+   - If an official product page fails fetch/extraction (HTTP 403, 404, or empty tables), search for the product's direct PDF datasheet before abandoning the source or concept.
+4. **Query Expansion & Bilingual Fallback**:
+   - Inspect the target concept note's YAML `tags:` and KB synonyms (or `synonyms.json`) to formulate query variants combining material aliases with application or process terms (e.g. `"tungsten copper" AND ("heat sink" OR "power electronics" OR "sintering")`).
+   - For sparse materials where English Crossref results yield fewer than 3 hits, run bilingual queries against J-STAGE (`site:jstage.jst.go.jp <Japanese tag from YAML> 熱伝導率`) and verify the resulting DOIs via `okf verify-source` (resolved natively via JaLC).
+
 ## CLI Usage Examples
 
 ```bash

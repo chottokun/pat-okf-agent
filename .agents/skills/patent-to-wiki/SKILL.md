@@ -65,6 +65,8 @@ uv run okf ingest-epo \
   --query '<CQL>' --max-results 10 --wiki <wiki> --offline --json
 ```
 
+Query tip: Expand CQL queries using the target concept's YAML `tags:` and synonyms. Combine material aliases with application terms across title and abstract (e.g. `(ti="<term>" or ti="<alias>" or ab="<term>") and (ti="<app>" or ab="<app>")`) instead of unconstrained single `ti=` queries.
+
 The ingester:
 
 - writes one `patents/<PUBLICATION>.md` node with `basis: external`, `sources` (`patent-biblio:<PUB> via=epo-ops` and `patent-claims:<PUB> via=epo-ops|epo-eps`), and `verified_at: YYYY-MM-DD`

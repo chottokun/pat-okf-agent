@@ -32,7 +32,7 @@ Every batch run must establish an isolated, resumable workspace before making an
    - For graph-expanding patent discovery batches (Phase 1) that may pull noisy candidates, initialize a staging wiki at `.kb-<project>-work/<phase>-<batch>/wiki/` and merge into the live KB only after pruning and verification.
    - For bounded enrichment batches on existing concepts (Phases 2–3), operate on the target concept files in the live KB after taking a milestone folder backup.
 2. **Prompt & Launch Log**: Save the exact worker instructions to `<work-dir>/prompt.md` (carrying forward lessons from the prior batch's Reflection). Capture worker stdout/stderr to `<work-dir>/run.log` and append an explicit `EXIT:<code>` footer when the process terminates so silent crashes or quota kills are never mistaken for clean completions.
-3. **Incremental Per-Concept Status Lines**: Create `<work-dir>/report.md` at batch start and append/update one numbered status line **immediately after each concept finishes** (never batch all reporting to the very end). If a run dies mid-batch from quota or rate limits, restart from `<work-dir>/report.md` at the first uncompleted concept — never from scratch.
+3. **Incremental Per-Concept Status Lines**: Ensure `<work-dir>/report.md` exists at batch start (orchestrator or worker creates it if absent) and append/update one numbered status line **immediately after each concept finishes** (never batch all reporting to the very end). If a run dies mid-batch from quota or rate limits, restart from `<work-dir>/report.md` at the first uncompleted concept — never from scratch.
    - **Patent batch line format**:
      `N. <concept> — query: <CQL> — ingested: <PUB1, PUB2, ...> — note: yes/no — problems: <none | details>`
    - **Paper / Web batch line format**:
@@ -50,10 +50,16 @@ A batch — or an individual concept within it — closes as `done` **only with 
    uv run okf stats <wiki> --json
    ```
    - Gate pass criteria: `validate` exits `0` with `0` errors, `0` warnings, `0` missing cited snapshots (`[E1]`), and `0` unexplained orphan snapshots (`[E2]`); `index --check` exits `0`; `stats` reports `"broken_links": 0` and `"undeclared": 0`.
+   - Index gate exception: For purely additive enrichment batches on existing notes (Phases 2–3), `uv run okf index <wiki> --check` alone is an acceptable index gate; running a full `uv run okf index <wiki>` write is required when notes are added, removed, or retitled.
 2. **Orphan & Off-Topic Hygiene Before Closing**:
    - In patent staging batches, prune uncited off-topic patent nodes (and their unreferenced family stubs) before running final gates so orphan count is `0`.
    - In web batches, every newly fetched snapshot that is not cited in any note's `sources:` must receive an objective rejection reason via `uv run okf verify-source <url> --orphan-reason "<reason>"` before running the final `validate --check-evidence` gate. Pre-existing explained orphans (`with reason`) are allowed; `unexplained` must be `0`.
-3. **Partial Close Rule**:
+3. **Per-Concept Source Targets & Floors**:
+   Each concept closes as `done` only when it reaches the batch target:
+   - Patents (Phase 1): Target 3–5 patents.
+   - Papers (Phase 2): Target 3 peer-reviewed papers (with $\ge 1$ quantitative claim where abstracts exist); 2 acceptable only when literature is genuinely sparse, explicitly justified in `problems:` and `## Reflection`.
+   - Web (Phase 3): Target 2 distinct-vendor primary sources with quantitative specs; 1 acceptable only when vendor coverage is sparse, explicitly justified in `problems:` and `## Reflection`.
+4. **Partial Close Rule**:
    - Conclude the status table with explicit totals: `**Totals: X done / Y partial / Z failed.**`
    - If a concept hits rate limits, lacks domain hits, or fails verification, leave it marked `partial` or `failed` (open) with the concrete reason (`rate_limit`, `sparse_literature`, `http_403`, `validation_error`). **Never** pad a concept with off-topic sources, invent citations from memory, or round a partial result up to `done`.
 
@@ -99,7 +105,7 @@ Delegation between the **Orchestrator/Reviewer** (e.g. Shana) and the **Batch Wo
 Every batch prompt and worker execution must enforce these five hard boundaries:
 
 1. **Zero `.secrets/` or Credential Access**: Never read, print, or modify `.secrets/`, `.env`, or token caches. Never place internal absolute filesystem paths (such as home or root paths) in tracked repository files (`scripts/check_public_repo.py`).
-2. **Strict File-Scope Lock**: A batch worker may write only to (a) its `<work-dir>/`, (b) the explicitly assigned concept/patent Markdown files, `data/external/` caches via `okf` CLI, and (c) generated `index*.md` files updated by running `okf index`. Never modify `src/`, `tests/`, `.agents/skills/`, or backup KB directories.
+2. **Strict File-Scope Lock**: A batch worker may write only to (a) its `<work-dir>/`, (b) the explicitly assigned concept/patent Markdown files, `data/external/` caches via `okf` CLI, and (c) generated `index*.md` files updated by running `okf index`. Never modify `src/`, `tests/`, `.agents/skills/`, or backup KB directories. Within an assigned note, updating stale internal narrative counts (e.g. `"上記 2 件"` → `"上記 3 件"` after adding a third source) to maintain consistency with added sources is allowed and is NOT a scope violation; record any such fix in the status line (`problems: ...`) and in `## Reflection` (`Mid-batch corrections`).
 3. **No `git` Commands by Batch Workers**: Workers must not run `git add`, `git commit`, `git checkout`, `git reset`, or `git clean`. Repository git operations and KB backup snapshots are performed solely by the orchestrator/owner.
 4. **Rate-Limit Politeness & Fail-Safe Stop**: Always use `okf ingest-epo` / `okf verify-source` rate limiters (3.0 s EPO/arXiv, 1.5–2.5 s Crossref/Web) and URL-encode query parameters. If an API returns persistent HTTP 429 or ledger HTTP 403 (`exit 2`), stop network calls immediately and close the batch partially.
 5. **See-Before-Cite & Material-Class Check**: Cite only identifiers resolved via ledger/snapshot. When a ledger record has no abstract, restrict body claims to what the title supports. Confirm exact material/device class (e.g. Cu sintering vs. Ag sintering; chip TIM vs. building/battery PCM) before adopting a source.
