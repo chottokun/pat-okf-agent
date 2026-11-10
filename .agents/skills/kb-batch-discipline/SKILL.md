@@ -1,0 +1,105 @@
+---
+name: KB Batch Collection Discipline
+description: Run, close, reflect on, and audit multi-concept OKF knowledge acquisition batches (patents, papers, web) with resumable work dirs, evidence gates, and staged delegation.
+trigger_conditions:
+  - batch collection
+  - scale-up batch
+  - multi-concept batch
+  - staged delegation
+  - batch report
+  - バッチ収集
+  - 一括収集
+  - フェーズ収集
+  - 委譲監査
+---
+
+# KB Batch Collection Discipline
+
+## Purpose & Skill Composition
+
+Use this skill whenever running or supervising a multi-concept knowledge collection batch (EPO patents, Crossref/arXiv papers, or web primary sources) across an OKF wiki.
+
+This skill governs **batch orchestration, progress accounting, closing gates, reflection handoff, and staged delegation**. Delegate low-level mechanics to existing skills instead of duplicating them:
+- Note structure, frontmatter, `[P1]`–`[P8]` provenance rules, and indexing → `.agents/skills/okf-wiki/SKILL.md`
+- Single-publication / CQL EPO ingestion → `.agents/skills/patent-to-wiki/SKILL.md`
+- DOI, arXiv, and web snapshot verification + `--orphan-reason` → `.agents/skills/source-verify/SKILL.md`
+
+## Batch Setup & Resumable Execution
+
+Every batch run must establish an isolated, resumable workspace before making any KB or network call:
+
+1. **Work Directory**: Create `.kb-<project>-work/<phase>-<batch>/` (gitignored under `.kb-*`).
+   - For graph-expanding patent discovery batches (Phase 1) that may pull noisy candidates, initialize a staging wiki at `.kb-<project>-work/<phase>-<batch>/wiki/` and merge into the live KB only after pruning and verification.
+   - For bounded enrichment batches on existing concepts (Phases 2–3), operate on the target concept files in the live KB after taking a milestone folder backup.
+2. **Prompt & Launch Log**: Save the exact worker instructions to `<work-dir>/prompt.md` (carrying forward lessons from the prior batch's Reflection). Capture worker stdout/stderr to `<work-dir>/run.log` and append an explicit `EXIT:<code>` footer when the process terminates so silent crashes or quota kills are never mistaken for clean completions.
+3. **Incremental Per-Concept Status Lines**: Create `<work-dir>/report.md` at batch start and append/update one numbered status line **immediately after each concept finishes** (never batch all reporting to the very end). If a run dies mid-batch from quota or rate limits, restart from `<work-dir>/report.md` at the first uncompleted concept — never from scratch.
+   - **Patent batch line format**:
+     `N. <concept> — query: <CQL> — ingested: <PUB1, PUB2, ...> — note: yes/no — problems: <none | details>`
+   - **Paper / Web batch line format**:
+     `N. <concept> — adopted: <ID/URL, ...> — rejected: <none | ID/URL (reason)> — problems: <none | details>`
+
+## Closing with Evidence (No Silent Drops)
+
+A batch — or an individual concept within it — closes as `done` **only with objective evidence recorded in `<work-dir>/report.md`**:
+
+1. **Required Gate Outputs**: Paste the exact command and output for all three end-of-batch gates into `report.md`:
+   ```bash
+   uv run okf validate <wiki> --strict-provenance --check-evidence
+   uv run okf index <wiki>
+   uv run okf index <wiki> --check
+   uv run okf stats <wiki> --json
+   ```
+   - Gate pass criteria: `validate` exits `0` with `0` errors, `0` warnings, `0` missing cited snapshots (`[E1]`), and `0` unexplained orphan snapshots (`[E2]`); `index --check` exits `0`; `stats` reports `"broken_links": 0` and `"undeclared": 0`.
+2. **Orphan & Off-Topic Hygiene Before Closing**:
+   - In patent staging batches, prune uncited off-topic patent nodes (and their unreferenced family stubs) before running final gates so orphan count is `0`.
+   - In web batches, every newly fetched snapshot that is not cited in any note's `sources:` must receive an objective rejection reason via `uv run okf verify-source <url> --orphan-reason "<reason>"` before running the final `validate --check-evidence` gate. Pre-existing explained orphans (`with reason`) are allowed; `unexplained` must be `0`.
+3. **Partial Close Rule**:
+   - Conclude the status table with explicit totals: `**Totals: X done / Y partial / Z failed.**`
+   - If a concept hits rate limits, lacks domain hits, or fails verification, leave it marked `partial` or `failed` (open) with the concrete reason (`rate_limit`, `sparse_literature`, `http_403`, `validation_error`). **Never** pad a concept with off-topic sources, invent citations from memory, or round a partial result up to `done`.
+
+## Reflection & Cross-Batch Handoff
+
+Every `<work-dir>/report.md` must end with a `## Reflection` section written immediately after the gates run:
+
+1. **Coverage & Shortfalls**: Exact count of concepts completed vs. target, explicitly noting any concept below the target source count (e.g. niche materials with only 2 peer-reviewed papers) and why.
+2. **Failures & Rejections**: Queries or URLs that returned `not_found` / `403` / SSL errors, off-topic search noise (e.g. supporting-information component DOIs, battery/building cooling hits, wrong material class), or metadata anomalies (e.g. conference year vs. registry year, missing abstracts).
+3. **Mid-Batch Corrections**: Query refinements, pruned nodes, text/typo fixes, or claim-scope restrictions (such as restricting body bullets to title-level claims when an abstract is unavailable in the ledger).
+4. **Carry-Forward Rules for Next Batch**: 1–3 concrete, actionable instructions for the next phase/batch (e.g. API filters to apply, dead vendor domains to skip, material-class disambiguation checks).
+
+**Mandatory Handoff Rule**: When authoring `<next-work-dir>/prompt.md`, the orchestrator must read the previous batch's `## Reflection` and copy its carry-forward rules and known dead/off-topic traps into the new prompt's constraints.
+
+## Staged Delegation & Audit Protocol
+
+Delegation between the **Orchestrator/Reviewer** (e.g. Shana) and the **Batch Worker** (e.g. OpenCode) progresses through three stages. The evidence and reflection rules in §§2.3–2.4 are the precondition for every stage.
+
+| Stage | When Used | Worker Responsibility | Reviewer / Orchestrator Verification |
+| :--- | :--- | :--- | :--- |
+| **Stage 1: Full Verification** | Phase 1 (new concepts/patents), new KB domain, or new worker model | Run in staging wiki (`.kb-*-work/<batch>/wiki/`), prune off-topic nodes, pass gates, write `report.md` + `Reflection`. | **100% check**: inspect all drafted concept notes, verify source relevance, re-run gates, then merge into live KB. |
+| **Stage 2: Sample Audit** | Phases 2–3 (papers/web) after Stage 1 passes clean | Edit target concept notes, run `okf verify-source`, record `--orphan-reason` on rejected snapshots, pass all live-KB gates, write `report.md` + `Reflection`. | **Stratified sample audit** ($\ge 3$ concepts or $15\text{--}20\%$, plus all concepts with `problems != none` or below-target counts). |
+| **Stage 3: Anomaly Audit** | Mature steady-state batches after repeated clean Stage 2 passes | Same as Stage 2. | Check gate outputs and `report.md` totals; deep-audit **only anomalies** (concepts with `problems`, `< target` sources, or new orphan reasons). |
+
+**Promotion & Demotion Rule**:
+- Advance from Stage $k$ to Stage $k+1$ only after a **clean pass** (gates exit `0`, zero unverified/fabricated sources, zero silent drops, complete Reflection).
+- Demote immediately back to Stage 1 if a sample audit uncovers a fabricated identifier, an ungrounded numeric claim outside an unverified marker, or a hidden failure.
+
+**Sample-Audit Record Form** (recorded by Reviewer after Stage 2/3 batches):
+````markdown
+### Audit Summary (<Reviewer>, YYYY-MM-DD)
+- **Stage**: Stage 2 (Sample Audit) | Stage 3 (Anomaly Audit)
+- **Gate check**: `okf validate --strict-provenance --check-evidence` exit 0 (missing=0, unexplained_orphans=0); `okf index --check` exit 0
+- **Sampled concepts & sources**:
+  1. `<concept>` (`<source_id_or_url>`): <independent DOI/snapshot/.extracted.txt verification result — pass/fail>
+  2. `<concept>` (`<source_id_or_url>`): <pass/fail>
+  3. `<anomaly/problem concept>` (`<source_id_or_url>`): <pass/fail>
+- **Verdict**: APPROVED (eligible for Stage <N>) | REWORK REQUIRED (<reason>)
+````
+
+## Hard Constraints (Non-Negotiables)
+
+Every batch prompt and worker execution must enforce these five hard boundaries:
+
+1. **Zero `.secrets/` or Credential Access**: Never read, print, or modify `.secrets/`, `.env`, or token caches. Never place internal absolute filesystem paths (such as home or root paths) in tracked repository files (`scripts/check_public_repo.py`).
+2. **Strict File-Scope Lock**: A batch worker may write only to (a) its `<work-dir>/`, (b) the explicitly assigned concept/patent Markdown files, `data/external/` caches via `okf` CLI, and (c) generated `index*.md` files updated by running `okf index`. Never modify `src/`, `tests/`, `.agents/skills/`, or backup KB directories.
+3. **No `git` Commands by Batch Workers**: Workers must not run `git add`, `git commit`, `git checkout`, `git reset`, or `git clean`. Repository git operations and KB backup snapshots are performed solely by the orchestrator/owner.
+4. **Rate-Limit Politeness & Fail-Safe Stop**: Always use `okf ingest-epo` / `okf verify-source` rate limiters (3.0 s EPO/arXiv, 1.5–2.5 s Crossref/Web) and URL-encode query parameters. If an API returns persistent HTTP 429 or ledger HTTP 403 (`exit 2`), stop network calls immediately and close the batch partially.
+5. **See-Before-Cite & Material-Class Check**: Cite only identifiers resolved via ledger/snapshot. When a ledger record has no abstract, restrict body claims to what the title supports. Confirm exact material/device class (e.g. Cu sintering vs. Ag sintering; chip TIM vs. building/battery PCM) before adopting a source.
