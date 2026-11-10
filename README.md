@@ -15,7 +15,7 @@ Python 3.12+ toolkit combining cache-first **EPO OPS / EPS** and **USPTO Open Da
 - `src/pat_okf_agent/wiki/qdrant_backend.py` — Qdrant REST adapter
 - `src/pat_okf_agent/wiki/synonyms.py` — bounded query expansion + synonym evaluation
 - `src/pat_okf_agent/wiki/evolution.py` — deterministic `EvolutionLoop` + non-destructive proposals
-- `.agents/skills/` — project skills (OKF operations, patent ingestion, skill authoring)
+- `.agents/skills/` — project skills (OKF operations, patent ingestion, source verification, batch discipline, skill authoring)
 - `examples/wiki/` — synthetic demo wiki (patents + workflow/gotcha/synergy nodes)
 - `scripts/release_smoke.py` — offline CLI/MCP release smoke test
 - `scripts/check_dist.py` — wheel/sdist secret and CLI-content guard
