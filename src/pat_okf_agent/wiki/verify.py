@@ -12,6 +12,8 @@ import io
 import json
 import os
 import re
+import shutil
+import subprocess
 import time
 import urllib.error
 import urllib.parse
@@ -76,6 +78,7 @@ class SourceMetadata:
     url: str | None = None
     abstract_available: bool = False
     abstract: str | None = None
+    abstract_source: str | None = None
 
 
 @dataclass
@@ -384,8 +387,30 @@ class _HtmlSnapshotParser(HTMLParser):
         return _clean_space(" ".join(self.text_parts))
 
 
+def _run_pdftotext(data: bytes) -> str | None:
+    """Attempt extracting text via pdftotext CLI (poppler), returning cleaned text or None."""
+    if not shutil.which("pdftotext"):
+        return None
+    try:
+        proc = subprocess.run(
+            ["pdftotext", "-", "-"],
+            input=data,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            check=False,
+        )
+        if proc.returncode == 0:
+            text = proc.stdout.decode("utf-8", errors="replace")
+            cleaned = _clean_space(text)
+            return cleaned if cleaned else None
+    except Exception:
+        return None
+    return None
+
+
 def _extract_pdf_text(data: bytes) -> tuple[str, bool, str]:
-    """Extract text from PDF using pypdf if available, returning (text, success, extractor)."""
+    """Extract text from PDF using pypdf if available, falling back to pdftotext CLI and ascii."""
     try:
         import pypdf
 
@@ -395,13 +420,23 @@ def _extract_pdf_text(data: bytes) -> tuple[str, bool, str]:
             t = page.extract_text()
             if t:
                 parts.append(t)
-        return _clean_space(" ".join(parts)), True, "pypdf"
+        pypdf_text = _clean_space(" ".join(parts))
+        if pypdf_text:
+            return pypdf_text, True, "pypdf"
+        # pypdf yielded empty or near-empty text: try pdftotext fallback
+        poppler_text = _run_pdftotext(data)
+        if poppler_text:
+            return poppler_text, True, "pdftotext"
+        return "", True, "pypdf"
     except ImportError:
         # Fallback: extract ASCII-like strings from binary
         ascii_text = re.findall(rb"[A-Za-z0-9 .,:;!?/\-]{4,}", data)
         text_str = " ".join(b.decode("ascii", errors="ignore") for b in ascii_text)
         return _clean_space(text_str), False, "ascii_fallback"
     except Exception:
+        poppler_text = _run_pdftotext(data)
+        if poppler_text:
+            return poppler_text, True, "pdftotext"
         return "", False, "pypdf_error"
 
 
@@ -478,6 +513,25 @@ def _strip_jats_xml(raw: str) -> str:
     cleaned = re.sub(r"<[^>]+>", " ", raw)
     cleaned = html.unescape(cleaned)
     return _clean_space(cleaned)
+
+
+def _reconstruct_openalex_abstract(inverted_index: Any) -> str | None:
+    """Reconstruct plaintext abstract from OpenAlex abstract_inverted_index."""
+    if not isinstance(inverted_index, dict) or not inverted_index:
+        return None
+    positions: list[tuple[int, str]] = []
+    for word, idxs in inverted_index.items():
+        if not isinstance(word, str) or not isinstance(idxs, list):
+            continue
+        for idx in idxs:
+            if isinstance(idx, int):
+                positions.append((idx, word))
+    if not positions:
+        return None
+    positions.sort(key=lambda item: item[0])
+    text = " ".join(word for _, word in positions)
+    cleaned = _clean_space(text)
+    return cleaned if cleaned else None
 
 
 def _parse_date_parts(date_obj: Any) -> tuple[str | None, int | None]:
@@ -857,6 +911,14 @@ class SourceVerifier:
             else:
                 raise SourceApiError(status, url, body.decode("utf-8", errors="replace"))
 
+        # Fallback to OpenAlex for abstract if registry verification succeeded without one
+        if meta.abstract is None:
+            oa_abstract, oa_source = self._fetch_openalex_abstract(bare_doi, safe_doi)
+            if oa_abstract:
+                meta.abstract = oa_abstract
+                meta.abstract_available = True
+                meta.abstract_source = oa_source
+
         effective_issued = issued or extracted_issued
         checks, status_str, ok = _evaluate_checks(
             meta,
@@ -973,6 +1035,51 @@ class SourceVerifier:
                 return agency, agency, meta, issued, years, str(csl_cache), sha
 
         return None, "crossref", SourceMetadata(), None, set(), None, None
+
+    def _fetch_openalex_abstract(
+        self, bare_doi: str, safe_doi: str
+    ) -> tuple[str | None, str | None]:
+        """Fetch abstract from OpenAlex for a DOI, returning (abstract, abstract_source).
+
+        Caches the raw JSON at cache_dir / 'openalex' / f'{safe_doi}.json'.
+        Returns (None, None) gracefully on any error or missing abstract.
+        """
+        openalex_cache = self.cache_dir / "openalex" / f"{safe_doi}.json"
+        payload: dict[str, Any] | None = None
+
+        if openalex_cache.exists() and not self.refresh:
+            try:
+                data_bytes = openalex_cache.read_bytes()
+                payload = json.loads(data_bytes.decode("utf-8"))
+            except Exception:
+                payload = None
+
+        if payload is None:
+            quoted_doi = urllib.parse.quote(bare_doi, safe="")
+            url = f"https://api.openalex.org/works/https://doi.org/{quoted_doi}"
+            if self.mailto:
+                quoted_mailto = urllib.parse.quote(self.mailto)
+                url_with_mail = f"{url}?mailto={quoted_mailto}"
+            else:
+                url_with_mail = url
+
+            try:
+                status, _, body = self._http_request(
+                    url_with_mail, is_ledger=True, interval=1.5
+                )
+                if status == 200:
+                    _atomic_write(openalex_cache, body.decode("utf-8", errors="replace"))
+                    payload = json.loads(body.decode("utf-8"))
+            except Exception:
+                return None, None
+
+        if isinstance(payload, dict):
+            inverted = payload.get("abstract_inverted_index")
+            abstract = _reconstruct_openalex_abstract(inverted)
+            if abstract:
+                return abstract, "openalex"
+
+        return None, None
 
     def _parse_crossref_work(
         self, payload: dict[str, Any]

@@ -16,6 +16,7 @@ from pat_okf_agent.wiki.verify import (
     SourceVerifyError,
     VerificationChecks,
     VerificationResult,
+    _extract_pdf_text,
     classify_target,
     set_snapshot_orphan_reason,
     snapshot_key_for_url,
@@ -566,6 +567,140 @@ class TestDoiVerification(unittest.TestCase):
         self.assertFalse(res_cm.ok)
         self.assertEqual(res_cm.status, "unverified")
 
+    def test_openalex_abstract_fallback_success_and_claim_check(self) -> None:
+        cr_payload = {
+            "status": "ok",
+            "message": {
+                "title": ["Thermal Performance of Vapor Chamber"],
+                "author": [{"given": "Taro", "family": "Yamada"}],
+                "publisher": "Elsevier",
+                "published-print": {"date-parts": [[2023, 5, 10]]},
+                "type": "journal-article",
+            },
+        }
+        oa_payload = {
+            "id": "https://openalex.org/W1234567890",
+            "doi": "https://doi.org/10.1016/j.applthermaleng.2023.120859",
+            "abstract_inverted_index": {
+                "Leaf-vein": [0],
+                "wick": [1],
+                "achieved": [2],
+                "high": [3],
+                "thermal": [4],
+                "performance": [5],
+                "with": [6],
+                "300": [7],
+                "W/m·K.": [8],
+            },
+        }
+        transport = FakeTransport([
+            ("api.crossref.org/works/", FakeResponse(json.dumps(cr_payload))),
+            ("api.openalex.org/works/", FakeResponse(json.dumps(oa_payload))),
+        ])
+        verifier = self._make_verifier(transport)
+        res = verifier.verify(
+            "10.1016/j.applthermaleng.2023.120859",
+            check_claim=["300 W/m·K"],
+        )
+        self.assertTrue(res.ok)
+        self.assertEqual(res.status, "verified")
+        self.assertEqual(
+            res.metadata.abstract,
+            "Leaf-vein wick achieved high thermal performance with 300 W/m·K.",
+        )
+        self.assertTrue(res.metadata.abstract_available)
+        self.assertEqual(res.metadata.abstract_source, "openalex")
+        self.assertTrue(res.checks.claim_matches.get("300 W/m·K"))
+
+        # Cache file written
+        cached_file = self.cache_dir / "openalex" / "10.1016_j.applthermaleng.2023.120859.json"
+        self.assertTrue(cached_file.exists())
+        cached_json = json.loads(cached_file.read_text(encoding="utf-8"))
+        self.assertIn("abstract_inverted_index", cached_json)
+
+    def test_openalex_fallback_not_called_when_crossref_has_abstract(self) -> None:
+        cr_payload = {
+            "status": "ok",
+            "message": {
+                "title": ["Ceramic Heat Sink"],
+                "publisher": "Wiley",
+                "abstract": "<jats:p>Already has Crossref abstract</jats:p>",
+            },
+        }
+        # FakeTransport will raise AssertionError if any URL other than crossref is queried
+        transport = FakeTransport([
+            ("api.crossref.org/works/", FakeResponse(json.dumps(cr_payload))),
+        ])
+        verifier = self._make_verifier(transport)
+        res = verifier.verify("10.1111/jace.99999")
+        self.assertTrue(res.ok)
+        self.assertEqual(res.metadata.abstract, "Already has Crossref abstract")
+        self.assertTrue(res.metadata.abstract_available)
+        self.assertNotEqual(res.metadata.abstract_source, "openalex")
+        self.assertEqual(len(transport.requests), 1)
+
+    def test_openalex_failure_leaves_result_unchanged(self) -> None:
+        import urllib.error
+
+        cr_payload = {
+            "status": "ok",
+            "message": {
+                "title": ["Some Elsevier Paper"],
+                "publisher": "Elsevier",
+                "published-print": {"date-parts": [[2021]]},
+            },
+        }
+
+        def raise_oa_error():
+            raise urllib.error.HTTPError(
+                "https://api.openalex.org/works/...", 404, "Not Found", {}, None
+            )
+
+        transport = FakeTransport([
+            ("api.crossref.org/works/", FakeResponse(json.dumps(cr_payload))),
+            ("api.openalex.org/works/", raise_oa_error),
+        ])
+        verifier = self._make_verifier(transport)
+        res = verifier.verify("10.1016/j.error.2021")
+        self.assertTrue(res.ok)
+        self.assertEqual(res.status, "verified")
+        self.assertIsNone(res.metadata.abstract)
+        self.assertFalse(res.metadata.abstract_available)
+
+    def test_openalex_cache_reuse(self) -> None:
+        cr_payload = {
+            "status": "ok",
+            "message": {
+                "title": ["Cached Elsevier Paper"],
+                "publisher": "Elsevier",
+            },
+        }
+        oa_payload = {
+            "abstract_inverted_index": {
+                "First": [0],
+                "run": [1],
+                "abstract.": [2],
+            },
+        }
+        transport = FakeTransport([
+            ("api.crossref.org/works/", FakeResponse(json.dumps(cr_payload))),
+            ("api.openalex.org/works/", FakeResponse(json.dumps(oa_payload))),
+        ])
+        verifier = self._make_verifier(transport)
+        res1 = verifier.verify("10.1016/j.cached.2022")
+        self.assertEqual(res1.metadata.abstract, "First run abstract.")
+        self.assertEqual(len(transport.requests), 2)
+
+        # Second call: openalex response should be served from cache
+        transport.responses = [
+            ("api.crossref.org/works/", FakeResponse(json.dumps(cr_payload))),
+        ]
+        res2 = verifier.verify("10.1016/j.cached.2022")
+        self.assertEqual(res2.metadata.abstract, "First run abstract.")
+        # Only crossref cache hit + openalex cache hit -> 0 new requests
+        self.assertEqual(len(transport.requests), 2)
+
+
 
 ARXIV_SAMPLE_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
@@ -1093,6 +1228,142 @@ class TestUrlVerification(unittest.TestCase):
 
         # Strictly Read-Only: .extracted.txt should NOT be created lazily
         self.assertFalse(extracted_file := extracted_path.exists())
+
+    def test_extract_pdf_text_pdftotext_success(self) -> None:
+        import subprocess
+        from unittest.mock import MagicMock, patch
+
+        mock_pypdf = MagicMock()
+        mock_reader = MagicMock()
+        mock_page = MagicMock()
+        mock_page.extract_text.return_value = ""  # pypdf returns empty text
+        mock_reader.pages = [mock_page]
+        mock_pypdf.PdfReader.return_value = mock_reader
+
+        mock_proc = subprocess.CompletedProcess(
+            args=["pdftotext", "-", "-"],
+            returncode=0,
+            stdout=b"Poppler extracted 250 W/mK\n",
+            stderr=b"",
+        )
+
+        with (
+            patch.dict("sys.modules", {"pypdf": mock_pypdf}),
+            patch("shutil.which", return_value="/usr/bin/pdftotext"),
+            patch("subprocess.run", return_value=mock_proc) as mock_run,
+        ):
+            text, ok, extractor = _extract_pdf_text(b"%PDF-custom-font")
+            self.assertEqual(text, "Poppler extracted 250 W/mK")
+            self.assertTrue(ok)
+            self.assertEqual(extractor, "pdftotext")
+            mock_run.assert_called_once()
+            args, kwargs = mock_run.call_args
+            self.assertEqual(args[0], ["pdftotext", "-", "-"])
+            self.assertEqual(kwargs.get("input"), b"%PDF-custom-font")
+
+    def test_extract_pdf_text_pdftotext_missing(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        mock_pypdf = MagicMock()
+        mock_reader = MagicMock()
+        mock_page = MagicMock()
+        mock_page.extract_text.return_value = ""
+        mock_reader.pages = [mock_page]
+        mock_pypdf.PdfReader.return_value = mock_reader
+
+        with (
+            patch.dict("sys.modules", {"pypdf": mock_pypdf}),
+            patch("shutil.which", return_value=None),
+            patch("subprocess.run") as mock_run,
+        ):
+            text, ok, extractor = _extract_pdf_text(b"%PDF-custom-font")
+            self.assertEqual(text, "")
+            self.assertTrue(ok)
+            self.assertEqual(extractor, "pypdf")
+            mock_run.assert_not_called()
+
+    def test_extract_pdf_text_pdftotext_error_graceful(self) -> None:
+        import subprocess
+        from unittest.mock import MagicMock, patch
+
+        mock_pypdf = MagicMock()
+        mock_reader = MagicMock()
+        mock_page = MagicMock()
+        mock_page.extract_text.return_value = ""
+        mock_reader.pages = [mock_page]
+        mock_pypdf.PdfReader.return_value = mock_reader
+
+        # Case 1: subprocess raises exception
+        with (
+            patch.dict("sys.modules", {"pypdf": mock_pypdf}),
+            patch("shutil.which", return_value="/usr/bin/pdftotext"),
+            patch("subprocess.run", side_effect=subprocess.SubprocessError("pdftotext error")),
+        ):
+            text, ok, extractor = _extract_pdf_text(b"%PDF-custom-font")
+            self.assertEqual(text, "")
+            self.assertTrue(ok)
+            self.assertEqual(extractor, "pypdf")
+
+        # Case 2: subprocess exits non-zero
+        mock_fail = subprocess.CompletedProcess(
+            args=["pdftotext", "-", "-"], returncode=1, stdout=b"", stderr=b"Syntax error"
+        )
+        with (
+            patch.dict("sys.modules", {"pypdf": mock_pypdf}),
+            patch("shutil.which", return_value="/usr/bin/pdftotext"),
+            patch("subprocess.run", return_value=mock_fail),
+        ):
+            text, ok, extractor = _extract_pdf_text(b"%PDF-custom-font")
+            self.assertEqual(text, "")
+            self.assertTrue(ok)
+            self.assertEqual(extractor, "pypdf")
+
+    def test_url_pdf_with_pdftotext_integration(self) -> None:
+        import subprocess
+        from unittest.mock import MagicMock, patch
+
+        pdf_bytes = b"%PDF-1.4 custom font bytes"
+        transport = FakeTransport([
+            ("example.com/custom.pdf", FakeResponse(
+                pdf_bytes,
+                headers={"Content-Type": "application/pdf"}
+            )),
+        ])
+        v = self._make_verifier(transport)
+
+        mock_pypdf = MagicMock()
+        mock_reader = MagicMock()
+        mock_page = MagicMock()
+        mock_page.extract_text.return_value = ""  # pypdf returns empty
+        mock_reader.pages = [mock_page]
+        mock_pypdf.PdfReader.return_value = mock_reader
+
+        mock_proc = subprocess.CompletedProcess(
+            args=["pdftotext", "-", "-"],
+            returncode=0,
+            stdout=b"Thermal conductivity: 250 W/mK at 25 C\n",
+            stderr=b"",
+        )
+
+        with (
+            patch.dict("sys.modules", {"pypdf": mock_pypdf}),
+            patch("shutil.which", return_value="/usr/bin/pdftotext"),
+            patch("subprocess.run", return_value=mock_proc),
+        ):
+            res = v.verify("https://example.com/custom.pdf", check_claim=["250 W/mK"])
+            self.assertTrue(res.ok)
+            self.assertEqual(res.status, "verified")
+            meta = json.loads(Path(res.evidence.meta_path).read_text("utf-8"))
+            self.assertEqual(meta["extractor"], "pdftotext")
+            self.assertTrue(res.checks.claim_matches.get("250 W/mK"))
+            extracted_path = Path(res.evidence.snapshot_path).with_name(
+                f"{Path(res.evidence.snapshot_path).stem}.extracted.txt"
+            )
+            self.assertEqual(
+                extracted_path.read_text("utf-8"),
+                "Thermal conductivity: 250 W/mK at 25 C",
+            )
+
 
 
 class TestSnapshotKeyAndOrphanReason(unittest.TestCase):
