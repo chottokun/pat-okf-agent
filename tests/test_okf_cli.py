@@ -647,6 +647,23 @@ class CliTests(unittest.TestCase):
             self.assertEqual(code_err, 2)
             self.assertIn("error:", err_err)
 
+    def test_kb_batch_discipline_skill_preflight_and_proposals_contract(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        skill_path = (
+            repo_root / ".agents" / "skills" / "kb-batch-discipline" / "SKILL.md"
+        )
+        text = skill_path.read_text(encoding="utf-8")
+        self.assertIn("Prior Reflection consulted: <path>", text)
+        self.assertIn(".agents/skills/.proposals/<skill-slug>.md", text)
+        self.assertIn("Two-Stage Gate", text)
+        code, out, _ = self.run_cli(
+            "skills", repo_root, "--skills-dir", repo_root / ".agents" / "skills",
+            "--check", "--json",
+        )
+        self.assertEqual(code, 0)
+        payload = json.loads(out)
+        self.assertTrue(payload["ok"])
+
 
 if __name__ == "__main__":
     unittest.main()

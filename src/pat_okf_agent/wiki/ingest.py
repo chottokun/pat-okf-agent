@@ -8,19 +8,21 @@ remains the single gate for OPS traffic.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 from ..epo import EpoError, PublicationRef, normalize_docdb
-from .frontmatter import FrontmatterError
+from .frontmatter import FrontmatterError, parse_frontmatter
 from .index import write_indexes
 from .model import load_concept, write_concept
 
 __all__ = ["ingest_publication", "ingest_query"]
 
 _DATE_RE = re.compile(r"^(\d{4})(\d{2})(\d{2})$")
+_VOLATILE_META_KEYS = frozenset({"timestamp", "verified_at"})
 
 
 def ingest_publication(
@@ -82,9 +84,11 @@ def ingest_publication(
             rel = f"patents/{member_compact}.md"
             if _is_full_node(wiki, rel):
                 continue
-            write_concept(wiki / rel,
-                          _stub_meta(member_compact, compact, timestamp),
-                          _stub_body(member_compact, compact))
+            _write_concept_if_changed(
+                wiki / rel,
+                _stub_meta(member_compact, compact, timestamp),
+                _stub_body(member_compact, compact),
+            )
             stubs.append(rel)
 
     linkable = {
@@ -92,13 +96,15 @@ def ingest_publication(
         if (wiki / f"patents/{_compact_ref(member)}.md").exists()
     }
     node_rel = f"patents/{compact}.md"
-    write_concept(wiki / node_rel,
-                  _patent_meta(compact, biblio, timestamp,
-                               claims_source=claims_source),
-                  _patent_body(compact, biblio, claims, members,
-                               include_claims=include_claims,
-                               include_family=include_family,
-                               linkable=linkable))
+    _write_concept_if_changed(
+        wiki / node_rel,
+        _patent_meta(compact, biblio, timestamp,
+                     claims_source=claims_source),
+        _patent_body(compact, biblio, claims, members,
+                     include_claims=include_claims,
+                     include_family=include_family,
+                     linkable=linkable),
+    )
     _append_log(wiki, timestamp, compact, len(claims), len(members))
     index_files = write_indexes(wiki)
 
@@ -247,6 +253,43 @@ def _stub_body(compact: str, parent: str) -> str:
 
 
 # -- helpers ----------------------------------------------------------------
+
+def _substantive_meta(meta: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        key: value for key, value in meta.items()
+        if key not in _VOLATILE_META_KEYS
+    }
+
+
+def _is_substantively_unchanged(
+    target: Path,
+    meta: Mapping[str, Any],
+    body: str,
+) -> bool:
+    if not target.exists():
+        return False
+    try:
+        existing_meta, existing_body = parse_frontmatter(
+            target.read_text(encoding="utf-8")
+        )
+    except (OSError, FrontmatterError):
+        return False
+    return (
+        _substantive_meta(existing_meta) == _substantive_meta(meta)
+        and existing_body == body
+    )
+
+
+def _write_concept_if_changed(
+    target: Path,
+    meta: dict[str, Any],
+    body: str = "",
+) -> bool:
+    if _is_substantively_unchanged(target, meta, body):
+        return False
+    write_concept(target, meta, body)
+    return True
+
 
 def _is_full_node(wiki: Path, rel: str) -> bool:
     target = wiki / rel

@@ -1,6 +1,7 @@
 """Tests for EPO -> OKF ingestion (offline fake client)."""
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,7 @@ from pat_okf_agent.wiki.frontmatter import parse_frontmatter
 from pat_okf_agent.wiki.ingest import ingest_publication, ingest_query
 
 NOW = "2026-10-29T00:00:00Z"
+LATER = "2026-11-11T09:30:00Z"
 
 
 def biblio(number: str = "9999999", title: str = "Amorphous alloy") -> dict:
@@ -242,6 +244,74 @@ class IngestTests(unittest.TestCase):
         ingest_publication(FakeEpo(), "EP9999999B1", target, now=NOW)
         self.assertTrue((target / "patents/EP9999999B1.md").exists())
         self.assertTrue((target / "index.md").exists())
+
+    def test_reingestion_with_new_timestamp_skips_write_when_unchanged(self):
+        family = [
+            PublicationRef("EP", "9999999", "B1", "20180131", "99999999"),
+            PublicationRef("US", "1234567", "B2", "20190205", "99999999"),
+        ]
+        client = FakeEpo(family=family)
+        ingest_publication(client, "EP9999999B1", self.root, now=NOW)
+
+        node_path = self.root / "patents/EP9999999B1.md"
+        stub_path = self.root / "patents/US1234567B2.md"
+        first_node_bytes = node_path.read_bytes()
+        first_stub_bytes = stub_path.read_bytes()
+
+        fixed_ns = 1_700_000_000_000_000_000
+        os.utime(node_path, ns=(fixed_ns, fixed_ns))
+        os.utime(stub_path, ns=(fixed_ns, fixed_ns))
+
+        ingest_publication(client, "EP9999999B1", self.root, now=LATER)
+
+        self.assertEqual(node_path.read_bytes(), first_node_bytes)
+        self.assertEqual(node_path.stat().st_mtime_ns, fixed_ns)
+        meta, _ = self.read("patents/EP9999999B1.md")
+        self.assertEqual(meta["timestamp"], NOW)
+        self.assertEqual(meta["verified_at"], "2026-10-29")
+
+        self.assertEqual(stub_path.read_bytes(), first_stub_bytes)
+        self.assertEqual(stub_path.stat().st_mtime_ns, fixed_ns)
+        stub_meta, _ = self.read("patents/US1234567B2.md")
+        self.assertEqual(stub_meta["timestamp"], NOW)
+
+    def test_reingestion_overwrites_when_body_or_sources_change(self):
+        failing_client = FakeEpo(
+            claims_error=EpoApiError("not available", status=404)
+        )
+        ingest_publication(failing_client, "EP9999999B1", self.root, now=NOW)
+        meta_before, body_before = self.read("patents/EP9999999B1.md")
+        self.assertEqual(
+            meta_before["sources"], ["patent-biblio:EP9999999B1 via=epo-ops"]
+        )
+        self.assertIn("Claims not available", body_before)
+
+        full_client = FakeEpo()
+        ingest_publication(full_client, "EP9999999B1", self.root, now=LATER)
+        meta_after, body_after = self.read("patents/EP9999999B1.md")
+        self.assertEqual(meta_after["timestamp"], LATER)
+        self.assertEqual(meta_after["verified_at"], "2026-11-11")
+        self.assertIn(
+            "patent-claims:EP9999999B1 via=epo-ops", meta_after["sources"]
+        )
+        self.assertIn(
+            "A composition comprising an amorphous phase.", body_after
+        )
+
+    def test_reingestion_overwrites_when_existing_body_was_modified(self):
+        client = FakeEpo()
+        ingest_publication(client, "EP9999999B1", self.root, now=NOW)
+        node_path = self.root / "patents/EP9999999B1.md"
+        node_path.write_text(
+            node_path.read_text(encoding="utf-8") + "\nManual trailing note.\n",
+            encoding="utf-8",
+        )
+
+        ingest_publication(client, "EP9999999B1", self.root, now=LATER)
+        meta, body = self.read("patents/EP9999999B1.md")
+        self.assertEqual(meta["timestamp"], LATER)
+        self.assertEqual(meta["verified_at"], "2026-11-11")
+        self.assertNotIn("Manual trailing note.", body)
 
 
 if __name__ == "__main__":
