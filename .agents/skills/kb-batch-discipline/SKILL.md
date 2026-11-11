@@ -32,7 +32,10 @@ Every batch run must establish an isolated, resumable workspace before making an
    - For graph-expanding patent discovery batches (Phase 1) that may pull noisy candidates, initialize a staging wiki at `.kb-<project>-work/<phase>-<batch>/wiki/` and merge into the live KB only after pruning and verification.
    - For bounded enrichment batches on existing concepts (Phases 2–3), operate on the target concept files in the live KB after taking a milestone folder backup.
 2. **Prompt & Launch Log**: Save the exact worker instructions to `<work-dir>/prompt.md` (carrying forward lessons from the prior batch's Reflection). Capture worker stdout/stderr to `<work-dir>/run.log` and append an explicit `EXIT:<code>` footer when the process terminates so silent crashes or quota kills are never mistaken for clean completions.
-3. **Incremental Per-Concept Status Lines**: Ensure `<work-dir>/report.md` exists at batch start (orchestrator or worker creates it if absent) and append/update one numbered status line **immediately after each concept finishes** (never batch all reporting to the very end). If a run dies mid-batch from quota or rate limits, restart from `<work-dir>/report.md` at the first uncompleted concept — never from scratch.
+3. **Preflight Reflection & Learned-Rule Check**: At batch start (before running queries or editing concepts), the worker must read the `## Reflection` sections of previous batch `report.md` files under `.kb-<project>-work/*/` (at minimum the most recent completed batch, if any exist) and the `<!-- LEARNED -->` block at the tail of `<wiki>/.agents/AGENTS.md` (if present). In the Preflight section of the new `<work-dir>/report.md`, record one line per file read:
+   `Prior Reflection consulted: <path>`
+   (or `Prior Reflection consulted: none (first batch)` when no prior batch report exists). Apply those carry-forward rules and known dead/off-topic traps throughout the batch.
+4. **Incremental Per-Concept Status Lines**: Ensure `<work-dir>/report.md` exists at batch start (orchestrator or worker creates it if absent) and append/update one numbered status line **immediately after each concept finishes** (never batch all reporting to the very end). If a run dies mid-batch from quota or rate limits, restart from `<work-dir>/report.md` at the first uncompleted concept — never from scratch.
    - **Patent batch line format**:
      `N. <concept> — query: <CQL> — ingested: <PUB1, PUB2, ...> — note: yes/no — problems: <none | details>`
    - **Paper / Web batch line format**:
@@ -72,7 +75,30 @@ Every `<work-dir>/report.md` must end with a `## Reflection` section written imm
 3. **Mid-Batch Corrections**: Query refinements, pruned nodes, text/typo fixes, or claim-scope restrictions (such as restricting body bullets to title-level claims when an abstract is unavailable in the ledger).
 4. **Carry-Forward Rules for Next Batch**: 1–3 concrete, actionable instructions for the next phase/batch (e.g. API filters to apply, dead vendor domains to skip, material-class disambiguation checks).
 
-**Mandatory Handoff Rule**: When authoring `<next-work-dir>/prompt.md`, the orchestrator must read the previous batch's `## Reflection` and copy its carry-forward rules and known dead/off-topic traps into the new prompt's constraints.
+**Mandatory Handoff Rule**: When authoring `<next-work-dir>/prompt.md`, the orchestrator must read the previous batch's `## Reflection` and copy its carry-forward rules and known dead/off-topic traps into the new prompt's constraints. Even when launched with a terse prompt, the worker must independently read prior `## Reflection` sections at batch start and log `Prior Reflection consulted: <path>` in `<work-dir>/report.md` (see `Batch Setup` item 3).
+
+**Skill-Improvement Proposals (Two-Stage Gate)**:
+When a batch discovers a reusable workflow rule or failure guard that should be codified across all future batches (beyond one-off query tweaks), emit a reviewable proposal file to `.agents/skills/.proposals/<skill-slug>.md` (where `<skill-slug>` matches the target skill folder name, e.g. `kb-batch-discipline`, `source-verify`, `patent-to-wiki`, or `okf-wiki`):
+- **Two-Stage Gate**: Workers may write or append proposals under `.agents/skills/.proposals/<skill-slug>.md` (which is ignored by `okf skills` discovery) and **must never edit `.agents/skills/<skill-slug>/SKILL.md` directly**. Only the orchestrator/reviewer promotes an approved proposal into the live `SKILL.md` via `modify-skill` after batch audit passes.
+- **Proposal File Format** (`.agents/skills/.proposals/<skill-slug>.md`):
+  ````markdown
+  # Skill update proposal: <short title>
+
+  - Target: `.agents/skills/<skill-slug>/SKILL.md`
+  - Source batch: `<work-dir>/report.md` (`YYYY-MM-DD`)
+  - Target section: `<## Heading in SKILL.md>`
+
+  ## Observed problem / evidence
+  - <1–3 bullets citing concrete batch failures, gate errors, or audit findings>
+
+  ## Proposed rule change
+  - <exact wording or bullet to insert/update in the target section>
+
+  ## Review checklist
+  - [ ] Rule is reusable across batches (not a single-concept workaround).
+  - [ ] Commands and flags match the current `okf` CLI.
+  - [ ] `uv run okf skills . --check --json` passes after promotion.
+  ````
 
 ## Staged Delegation & Audit Protocol
 
@@ -105,7 +131,7 @@ Delegation between the **Orchestrator/Reviewer** (e.g. Shana) and the **Batch Wo
 Every batch prompt and worker execution must enforce these five hard boundaries:
 
 1. **Zero `.secrets/` or Credential Access**: Never read, print, or modify `.secrets/`, `.env`, or token caches. Never place internal absolute filesystem paths (such as home or root paths) in tracked repository files (`scripts/check_public_repo.py`).
-2. **Strict File-Scope Lock**: A batch worker may write only to (a) its `<work-dir>/`, (b) the explicitly assigned concept/patent Markdown files, `data/external/` caches via `okf` CLI, and (c) generated `index*.md` files updated by running `okf index`. Never modify `src/`, `tests/`, `.agents/skills/`, or backup KB directories. Within an assigned note, updating stale internal narrative counts (e.g. `"上記 2 件"` → `"上記 3 件"` after adding a third source) to maintain consistency with added sources is allowed and is NOT a scope violation; record any such fix in the status line (`problems: ...`) and in `## Reflection` (`Mid-batch corrections`).
+2. **Strict File-Scope Lock**: A batch worker may write only to (a) its `<work-dir>/`, (b) the explicitly assigned concept/patent Markdown files, `data/external/` caches via `okf` CLI, (c) generated `index*.md` files updated by running `okf index`, and (d) optional skill-improvement proposals under `.agents/skills/.proposals/<skill-slug>.md`. Never modify `src/`, `tests/`, live skill files (`.agents/skills/*/SKILL.md`), or backup KB directories. Within an assigned note, updating stale internal narrative counts (e.g. `"上記 2 件"` → `"上記 3 件"` after adding a third source) to maintain consistency with added sources is allowed and is NOT a scope violation; record any such fix in the status line (`problems: ...`) and in `## Reflection` (`Mid-batch corrections`).
 3. **No `git` Commands by Batch Workers**: Workers must not run `git add`, `git commit`, `git checkout`, `git reset`, or `git clean`. Repository git operations and KB backup snapshots are performed solely by the orchestrator/owner.
 4. **Rate-Limit Politeness & Fail-Safe Stop**: Always use `okf ingest-epo` / `okf verify-source` rate limiters (3.0 s EPO/arXiv, 1.5–2.5 s Crossref/Web) and URL-encode query parameters. If an API returns persistent HTTP 429 or ledger HTTP 403 (`exit 2`), stop network calls immediately and close the batch partially.
 5. **See-Before-Cite & Material-Class Check**: Cite only identifiers resolved via ledger/snapshot. When a ledger record has no abstract, restrict body claims to what the title supports. Confirm exact material/device class (e.g. Cu sintering vs. Ag sintering; chip TIM vs. building/battery PCM) before adopting a source.
