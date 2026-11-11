@@ -1,15 +1,19 @@
 ---
 name: KB Batch Collection Discipline
-description: Run, close, reflect on, and audit multi-concept OKF knowledge acquisition batches (patents, papers, web) with resumable work dirs, evidence gates, and staged delegation.
+description: Select candidate concepts and run, close, reflect on, and audit multi-concept OKF knowledge acquisition batches (patents, papers, web) with resumable work dirs, evidence gates, and staged delegation.
 trigger_conditions:
   - batch collection
   - scale-up batch
   - multi-concept batch
+  - candidate selection
+  - next batch candidates
   - staged delegation
   - batch report
   - バッチ収集
   - 一括収集
   - フェーズ収集
+  - 候補選定
+  - 次バッチ候補
   - 委譲監査
 ---
 
@@ -17,12 +21,41 @@ trigger_conditions:
 
 ## Purpose & Skill Composition
 
-Use this skill whenever running or supervising a multi-concept knowledge collection batch (EPO patents, Crossref/arXiv papers, or web primary sources) across an OKF wiki.
+Use this skill whenever selecting next-batch concept candidates or running, supervising, and auditing a multi-concept knowledge collection batch (EPO patents, Crossref/arXiv papers, or web primary sources) across an OKF wiki.
 
-This skill governs **batch orchestration, progress accounting, closing gates, reflection handoff, and staged delegation**. Delegate low-level mechanics to existing skills instead of duplicating them:
+This skill governs **candidate selection, batch orchestration, progress accounting, closing gates, reflection handoff, and staged delegation**. Delegate low-level mechanics to existing skills instead of duplicating them:
 - Note structure, frontmatter, `[P1]`–`[P8]` provenance rules, and indexing → `.agents/skills/okf-wiki/SKILL.md`
 - Single-publication / CQL EPO ingestion → `.agents/skills/patent-to-wiki/SKILL.md`
 - DOI, arXiv, and web snapshot verification + `--orphan-reason` → `.agents/skills/source-verify/SKILL.md`
+
+## Candidate Selection & Proposal (Phase 1 / New-Concept Batches)
+
+Whenever proposing or selecting new concept candidates for a batch of $N$ concepts, never pick topics ad hoc. Execute this deterministic protocol **before** authoring `<work-dir>/prompt.md`:
+
+1. **Read-Only Inventory & Primary-Source Scan**:
+   - Read `<wiki>/concepts/index.md` (all existing slugs/titles), `<wiki>/SUMMARY.md` (domain boundary), `<wiki>/synonyms.json` (if present), and recent `<work-dir>/report.md` files (including any unmerged staging KBs under `.kb-*-work/*/`).
+   - Scan existing `concepts/*.md` (`## Taxonomy`, `## Workflow / Implementation`, `## Synergistic Combinations`) and verified caches (`data/external/source_verify/`) for uncollected topics referenced in patents, paper abstracts, or vendor datasheets. If any listed input is absent from the workspace, name it in the proposal header (`Inputs missing: <path>`); never infer its contents.
+   - **Gap-Axis Statement**: Before listing candidates, state in ≤ 3 sentences which gap axis or axes the pool follows (e.g. cooling devices, packaging/substrates, TIMs, composites), the in-KB evidence density behind that choice, and the strongest competing axis not chosen. The pool may span axes; never present it as the only valid gap analysis.
+2. **Five Mandatory Evaluation Criteria `(a)`–`(e)`**:
+   - **(a) Taxonomic Adjacency**: Does the candidate naturally extend an existing concept lineage (e.g. passive two-phase transport, phase-change cooling, metal-diamond/graphite composites, die-attach/substrates)? Must cite $\ge 1$ existing `concepts/<slug>.md` and the structural axis extended.
+   - **(b) Primary-Source Emergence**: Is the topic already mentioned in collected primary sources (ingested patent titles/claims, verified paper titles/abstracts, or vendor `.extracted.txt` snapshots) without having its own concept note? Cite the concrete in-KB artifact (`concepts/<slug>.md`, `patents/<PUB>.md`, `DOI`, or snapshot URL) **and quote the candidate term (or a stated synonym) exactly as it appears there**. A citation counts only if the artifact itself names the topic: thematically adjacent artifacts (e.g. a generic "semiconductor package" patent title for an underfill candidate), site navigation/menu text, and a paper's reference-list entries do not count. Otherwise mark `taxonomy-gap` (proposed solely via `(a)`). At least $\ge 2/3$ of proposed candidates should have direct, quoted in-KB mentions. Drop any cited source whose own framing is off-domain under `(e)`.
+   - **(c) Deduplication & Scope Boundary**: Confirm zero semantic overlap against all existing `concepts/*.md` slugs, YAML `tags:`, `synonyms.json` (`uv run okf search <wiki> "<candidate>" --expand`), and `## Taxonomy` subsections. Reject synonyms/aliases (e.g. `oscillating-heat-pipe` vs. `pulsating-heat-pipe.md`) and sub-topics already covered in depth. State a 1-line scope boundary vs. the closest existing note; if that note already cites the same primary sources, say what it covers and what the candidate adds.
+   - **(d) Portfolio Balance (`established` vs. `niche`)**: Classify each candidate as `established` (mature topic with abundant EPO patents $\ge 5$, papers $\ge 3$, and $\ge 2$ distinct vendor datasheets) or `niche` (specialized/exploratory material or mechanism with narrower vendor/literature density). Target a **`~2 : 1` (`established : niche`)** mix (e.g. **2 `established` + 1 `niche`** for $N=3$).
+   - **(e) Domain Fit & Trap Guard**: Confirm the candidate sits inside the target KB domain (`<wiki>/SUMMARY.md` — e.g. semiconductor thermal materials & electronics thermal management) and state known off-domain query traps to exclude (e.g. building HVAC, solar thermal, EV battery packs).
+3. **Over-Generation ($2N$ Pool) & Owner Selection**:
+   - Present **approximately $2N$ candidates** ($\ge 2N$; e.g. **6 candidates for an $N=3$ batch**, maintaining the `~2 : 1` `established : niche` ratio across the pool) with an evaluation memo for every candidate, followed by a recommended $N$-concept subset. Wait for the owner to choose/approve the final $N$ concepts before launching the batch:
+   ````markdown
+   **Gap axis**: <axis/axes chosen; in-KB evidence density; strongest competing axis not chosen>
+   ### Candidate Proposal Pool (Target: <N> concepts; Pool: <2N> candidates)
+   1. **`<candidate-slug>`** — <Title JP（EN）> [`established` | `niche`]
+      - **(a) Adjacency**: Extends `concepts/<existing-slug>.md` (<taxonomic axis>).
+      - **(b) Primary-Source Emergence**: `"<quoted term>"` in `<concepts/x.md | patents/PUB.md | DOI | snapshot URL>` (<brief context>) — or `taxonomy-gap`.
+      - **(c) Deduplication**: Checked `concepts/index.md` + `tags:`/`synonyms.json`; distinct from `concepts/<closest>.md` (<scope boundary>).
+      - **(d) Balance / Viability**: `<established | niche>` — <expected patent / paper / vendor datasheet availability>.
+      - **(e) Domain Fit & Traps**: <semiconductor/electronics thermal role>; exclude <off-domain noise traps>.
+   ...
+   **Recommended <N>-Concept Set (2:1 mix)**: `<slug-1>` (`established`), `<slug-2>` (`established`), `<slug-3>` (`niche`) — deferred runner-ups: `<slug-4>`, `<slug-5>`, `<slug-6>`.
+   ````
 
 ## Batch Setup & Resumable Execution
 
@@ -32,9 +65,15 @@ Every batch run must establish an isolated, resumable workspace before making an
    - For graph-expanding patent discovery batches (Phase 1) that may pull noisy candidates, initialize a staging wiki at `.kb-<project>-work/<phase>-<batch>/wiki/` and merge into the live KB only after pruning and verification.
    - For bounded enrichment batches on existing concepts (Phases 2–3), operate on the target concept files in the live KB after taking a milestone folder backup.
 2. **Prompt & Launch Log**: Save the exact worker instructions to `<work-dir>/prompt.md` (carrying forward lessons from the prior batch's Reflection). Capture worker stdout/stderr to `<work-dir>/run.log` and append an explicit `EXIT:<code>` footer when the process terminates so silent crashes or quota kills are never mistaken for clean completions.
-3. **Preflight Reflection & Learned-Rule Check**: At batch start (before running queries or editing concepts), the worker must read the `## Reflection` sections of previous batch `report.md` files under `.kb-<project>-work/*/` (at minimum the most recent completed batch, if any exist) and the `<!-- LEARNED -->` block at the tail of `<wiki>/.agents/AGENTS.md` (if present). In the Preflight section of the new `<work-dir>/report.md`, record one line per file read:
-   `Prior Reflection consulted: <path>`
-   (or `Prior Reflection consulted: none (first batch)` when no prior batch report exists). Apply those carry-forward rules and known dead/off-topic traps throughout the batch.
+3. **Preflight Reflection, Learned-Rule & Candidate Rationale Record**: At batch start (before running queries or editing concepts), the worker must read the `## Reflection` sections of previous batch `report.md` files under `.kb-<project>-work/*/` (at minimum the most recent completed batch, if any exist) and the `<!-- LEARNED -->` block at the tail of `<wiki>/.agents/AGENTS.md` (if present). In the `## Preflight` section of `<work-dir>/report.md`, record:
+   - One line per prior report read: `Prior Reflection consulted: <path>` (or `none (first batch)`), plus the carry-forward rules applied.
+   - For new-concept batches, a `### Candidate Selection Rationale` block recording the approved candidates, their `(a)`–`(e)` selection basis, and the deferred runner-ups from the $2N$ proposal pool (for enrichment-only batches on existing concepts, record `Target selection: existing concepts assigned for enrichment (<reason>)`):
+     ````markdown
+     ### Candidate Selection Rationale
+     - **Pool & Mix**: Selected <N> of <2N> proposed candidates (owner-approved YYYY-MM-DD; mix: <E> `established` + <M> `niche`; deferred runner-ups: `<slug-4>`, `<slug-5>`, `<slug-6>`).
+     - **Selected concepts**:
+       1. **`<slug-1>`** [`established` | `niche`] — (a) adjacent to `concepts/<adj>.md`; (b) surfaced in `<source-id/path>`; (c) distinct from `concepts/<closest>.md` (<scope boundary>); (e) semiconductor thermal role (<trap guard>).
+     ````
 4. **Incremental Per-Concept Status Lines**: Ensure `<work-dir>/report.md` exists at batch start (orchestrator or worker creates it if absent) and append/update one numbered status line **immediately after each concept finishes** (never batch all reporting to the very end). If a run dies mid-batch from quota or rate limits, restart from `<work-dir>/report.md` at the first uncompleted concept — never from scratch.
    - **Patent batch line format**:
      `N. <concept> — query: <CQL> — ingested: <PUB1, PUB2, ...> — note: yes/no — problems: <none | details>`
@@ -70,10 +109,10 @@ A batch — or an individual concept within it — closes as `done` **only with 
 
 Every `<work-dir>/report.md` must end with a `## Reflection` section written immediately after the gates run:
 
-1. **Coverage & Shortfalls**: Exact count of concepts completed vs. target, explicitly noting any concept below the target source count (e.g. niche materials with only 2 peer-reviewed papers) and why.
+1. **Coverage & Shortfalls**: Exact count of concepts completed vs. target, explicitly noting whether preflight `(d) established / niche` source-availability estimates held true and why any concept fell below target (e.g. niche materials with only 2 peer-reviewed papers).
 2. **Failures & Rejections**: Queries or URLs that returned `not_found` / `403` / SSL errors, off-topic search noise (e.g. supporting-information component DOIs, battery/building cooling hits, wrong material class), or metadata anomalies (e.g. conference year vs. registry year, missing abstracts).
 3. **Mid-Batch Corrections**: Query refinements, pruned nodes, text/typo fixes, or claim-scope restrictions (such as restricting body bullets to title-level claims when an abstract is unavailable in the ledger).
-4. **Carry-Forward Rules for Next Batch**: 1–3 concrete, actionable instructions for the next phase/batch (e.g. API filters to apply, dead vendor domains to skip, material-class disambiguation checks).
+4. **Carry-Forward Rules for Next Batch**: 1–3 concrete, actionable instructions for the next phase/batch (e.g. API filters to apply, dead vendor domains to skip, material-class disambiguation checks), plus any notable **uncollected candidate topics (`(b)` seeds)** spotted in newly ingested patents, papers, or vendor datasheets (with source IDs) to feed the next batch's `Candidate Selection & Proposal`.
 
 **Mandatory Handoff Rule**: When authoring `<next-work-dir>/prompt.md`, the orchestrator must read the previous batch's `## Reflection` and copy its carry-forward rules and known dead/off-topic traps into the new prompt's constraints. Even when launched with a terse prompt, the worker must independently read prior `## Reflection` sections at batch start and log `Prior Reflection consulted: <path>` in `<work-dir>/report.md` (see `Batch Setup` item 3).
 
