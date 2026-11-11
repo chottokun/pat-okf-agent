@@ -66,10 +66,13 @@ KNOWN_SOURCE_KINDS: tuple[str, ...] = (
 )
 
 WEB_SOURCE_KINDS: tuple[str, ...] = (
+    "datasheet",
     "product-page",
     "press-release",
+    "standard",
     "news",
     "web",
+    "manual",
 )
 
 NEWS_SOURCE_KINDS: tuple[str, ...] = (

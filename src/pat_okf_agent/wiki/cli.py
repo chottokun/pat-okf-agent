@@ -28,6 +28,7 @@ from .synonyms import (
     SynonymIndex,
     evaluate_synonyms,
     load_eval_queries,
+    sync_synonyms,
 )
 from .tooling import TOOL_SPECS, ToolError, wiki_stats
 from .validate import validate_wiki
@@ -164,6 +165,16 @@ def _parser() -> argparse.ArgumentParser:
     _add_qdrant_options(p_qdrant)
     p_qdrant.add_argument("--force", action="store_true")
     p_qdrant.add_argument("--json", action="store_true")
+
+    p_sync_syn = sub.add_parser(
+        "sync-synonyms",
+        help="synchronize synonyms.json from concept YAML tags")
+    p_sync_syn.add_argument("dir")
+    p_sync_syn.add_argument("--synonyms", default=None,
+                            help="alias file (default: <wiki>/synonyms.json)")
+    p_sync_syn.add_argument("--check", action="store_true",
+                            help="exit 1 if synonyms.json is missing or stale")
+    p_sync_syn.add_argument("--json", action="store_true")
 
     p_eval = sub.add_parser(
         "eval-synonyms",
@@ -443,6 +454,26 @@ def _dispatch(args: argparse.Namespace) -> int:
                   f"points: {summary.get('points', 0)}  "
                   f"dimensions: {summary['dimensions']}")
         return 0
+
+    if args.command == "sync-synonyms":
+        summary = sync_synonyms(
+            args.dir,
+            synonyms_path=args.synonyms,
+            check=args.check,
+        )
+        if args.json:
+            print(json.dumps(summary, ensure_ascii=False, indent=2))
+        elif args.check:
+            status = "stale" if summary["stale"] else "ok"
+            print(f"{status}: {summary['path']} "
+                  f"(groups={summary['group_count']})")
+        else:
+            action = "synced" if summary["written"] else "unchanged"
+            print(f"{action}: {summary['path']} "
+                  f"(groups={summary['group_count']}, "
+                  f"generated={summary['generated_count']}, "
+                  f"manual={summary['manual_count']})")
+        return 0 if summary["ok"] else 1
 
     if args.command == "eval-synonyms":
         wiki = Path(args.dir)

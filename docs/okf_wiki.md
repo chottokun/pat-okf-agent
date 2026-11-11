@@ -66,6 +66,7 @@ uv run okf search mywiki "amorphous alloy" --limit 5
 uv run okf traverse mywiki EP9999999B1 --depth 2
 uv run okf traverse mywiki workflows/fe-amorphous-screening --scope gotchas
 uv run okf context mywiki "アモルファス クレーム" --max-nodes 5
+uv run okf sync-synonyms mywiki
 uv run okf search mywiki "metallic glass" --expand --json
 uv run okf eval-synonyms mywiki --check
 uv run okf evolve mywiki --history .agents/flow_history.jsonl
@@ -121,7 +122,7 @@ verified_at: "2026-10-29"    # 任意: 照合確認日（YYYY-MM-DD）
     - 版管理層: `datasheet`（データシート）, `product-page`（製品ページ）, `patent-legal`（法的状態）
     - 揮発層（3年経過で P8 警告）: `press-release`（プレスリリース）, `news`（報道記事）, `preprint`（プレプリント）
     - その他: `patent-family`（ファミリー情報・スタブ用）, `web`（一般Web）, `manual`（人手入力）
-    - Web 系（`product-page`, `press-release`, `news`, `web`）は `retrieved=YYYY-MM-DD` が必須（P6）。
+    - Web 系（`datasheet`, `product-page`, `press-release`, `standard`, `news`, `web`, `manual`）は `retrieved=YYYY-MM-DD` が必須（P6）。
 - **`verified_at`**: 本文が出典と矛盾しないことを照合した日（YYYY-MM-DD）。
 
 ### 本文の統制語彙（3対）

@@ -15,6 +15,7 @@ from pat_okf_agent.wiki.model import (
     BASIS_VALUES,
     KNOWN_SOURCE_KINDS,
     SCOPE_WEIGHTS,
+    WEB_SOURCE_KINDS,
     Concept,
     SourceEntry,
     extract_links,
@@ -153,6 +154,21 @@ class ConceptTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
+
+    def test_web_source_kinds_inventory(self):
+        self.assertEqual(
+            WEB_SOURCE_KINDS,
+            (
+                "datasheet",
+                "product-page",
+                "press-release",
+                "standard",
+                "news",
+                "web",
+                "manual",
+            ),
+        )
+        self.assertTrue(set(WEB_SOURCE_KINDS).issubset(set(KNOWN_SOURCE_KINDS)))
 
     def test_load_concept_extracts_meta_links_and_fallbacks(self):
         write(self.root, "patents/EP1.md", node(
