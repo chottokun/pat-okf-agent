@@ -112,13 +112,15 @@ The Qdrant collection is derived data: rebuild it with `okf qdrant <wiki>` or
 `--force`; never edit it by hand.  If infrastructure is unavailable, fall back
 to `--backend local`.
 
-### Synonym quality gate
+### Synonym sync and quality gate
 
-`<wiki>/synonyms.json` contains alias groups.  `<wiki>/eval_queries.json`
-contains labelled expectations.  Use the evaluation command before changing
-the search pattern:
+`<wiki>/synonyms.json` contains alias groups synchronized from `concepts/*.md`
+`tags:` (plus optional `manual_groups`).  `<wiki>/eval_queries.json` contains
+labelled expectations.  Sync and evaluate before changing the search pattern:
 
 ```bash
+uv run okf sync-synonyms <wiki>
+uv run okf sync-synonyms <wiki> --check
 uv run okf eval-synonyms <wiki> --json
 uv run okf eval-synonyms <wiki> --check
 ```

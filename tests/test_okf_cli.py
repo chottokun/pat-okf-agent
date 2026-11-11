@@ -664,6 +664,105 @@ class CliTests(unittest.TestCase):
         payload = json.loads(out)
         self.assertTrue(payload["ok"])
 
+    def test_sync_synonyms_cli_check_write_and_expand_roundtrip(self):
+        write(
+            self.root,
+            "concepts/loop-heat-pipe.md",
+            node(
+                "type: Concept\n"
+                "title: 'ループヒートパイプ（Loop Heat Pipe）'\n"
+                "tags: [loop-heat-pipe, ループヒートパイプ, lhp, thermal, semiconductor]\n",
+                "# ループヒートパイプ\nLoop heat pipe overview.\n",
+            ),
+        )
+        write(
+            self.root,
+            "patents/EP1.md",
+            node(
+                "type: Patent\n"
+                "title: 'Loop heat pipe evaporator'\n"
+                "tags: [epo, patent]\n",
+                "# Loop heat pipe evaporator\nCapillary evaporator structure.\n",
+            ),
+        )
+
+        # 1. --check before generation exits 1
+        code, out, _ = self.run_cli("sync-synonyms", self.root, "--check", "--json")
+        self.assertEqual(code, 1)
+        check_before = json.loads(out)
+        self.assertFalse(check_before["ok"])
+        self.assertTrue(check_before["stale"])
+        self.assertFalse((self.root / "synonyms.json").exists())
+
+        # 2. Generate synonyms.json
+        code, out, _ = self.run_cli("sync-synonyms", self.root, "--json")
+        self.assertEqual(code, 0)
+        synced = json.loads(out)
+        self.assertTrue(synced["ok"])
+        self.assertTrue(synced["written"])
+        self.assertEqual(synced["generated_count"], 1)
+        self.assertEqual(synced["group_count"], 1)
+
+        # 3. --check after generation exits 0
+        code, out, _ = self.run_cli("sync-synonyms", self.root, "--check", "--json")
+        self.assertEqual(code, 0)
+        self.assertTrue(json.loads(out)["ok"])
+
+        # 4. Re-running sync-synonyms is idempotent (written=False)
+        code, out, _ = self.run_cli("sync-synonyms", self.root, "--json")
+        self.assertEqual(code, 0)
+        self.assertFalse(json.loads(out)["written"])
+
+        # 5. okf search --expand uses generated synonyms.json to find English patent via Japanese query
+        code, hits_no_exp, _ = self.run_cli("search", self.root, "ループヒートパイプ", "--json")
+        self.assertEqual(code, 0)
+        nodes_no_exp = [h["node"] for h in json.loads(hits_no_exp)]
+        self.assertNotIn("patents/EP1.md", nodes_no_exp)
+
+        code, hits_exp, _ = self.run_cli("search", self.root, "ループヒートパイプ", "--expand", "--json")
+        self.assertEqual(code, 0)
+        nodes_exp = [h["node"] for h in json.loads(hits_exp)]
+        self.assertIn("patents/EP1.md", nodes_exp)
+
+        # 6. okf eval-synonyms consumes generated synonyms.json cleanly
+        write(
+            self.root,
+            "eval_queries.json",
+            json.dumps([
+                {"id": "q1", "query": "lhp", "expected": ["patents/EP1.md"]},
+            ]),
+        )
+        code, eval_out, _ = self.run_cli("eval-synonyms", self.root, "--check", "--json")
+        self.assertEqual(code, 0)
+        eval_res = json.loads(eval_out)
+        self.assertEqual(eval_res["failures"], 0)
+        self.assertEqual(eval_res["improved"], 1)
+
+    def test_sync_synonyms_cli_preserves_existing_manual_entries(self):
+        write(
+            self.root,
+            "synonyms.json",
+            json.dumps([["custom-alias", "別名"]]),
+        )
+        write(
+            self.root,
+            "concepts/aln.md",
+            node(
+                "type: Concept\n"
+                "title: 'AlN'\n"
+                "tags: [AlN, aluminum-nitride, 窒化アルミニウム]\n",
+            ),
+        )
+        code, out, _ = self.run_cli("sync-synonyms", self.root)
+        self.assertEqual(code, 0)
+        self.assertIn("synced", out)
+        data = json.loads((self.root / "synonyms.json").read_text(encoding="utf-8"))
+        self.assertEqual(data["manual_groups"], [["custom-alias", "別名"]])
+        self.assertEqual(
+            data["generated_groups"],
+            [["AlN", "aluminum-nitride", "窒化アルミニウム"]],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

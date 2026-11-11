@@ -11,23 +11,50 @@ decision documented in ``docs/okf_wiki.md`` (more than 15% failure).
 from __future__ import annotations
 
 import json
+import os
 import re
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-from .model import iter_concepts
+from .model import Concept, iter_concepts
 from .search import SearchHit, pattern_for
 
 __all__ = [
+    "DEFAULT_EXCLUDE_TAGS",
     "ExpandedSearchBackend",
     "SynonymIndex",
     "evaluate_synonyms",
+    "extract_concept_synonym_groups",
     "load_eval_queries",
     "pattern_reason",
+    "plan_synonyms_sync",
+    "sync_synonyms",
 ]
 
 _SYNONYM_FAILURE_THRESHOLD = 0.15
+
+DEFAULT_EXCLUDE_TAGS: frozenset[str] = frozenset({
+    # Broad domain / physical property / category / facet tags
+    "semiconductor", "半導体", "パワー半導体", "wide-bandgap",
+    "thermal", "thermal-conductivity", "熱伝導率", "高熱伝導",
+    "thermal-management", "放熱", "cooling", "liquid-cooling", "two-phase",
+    "heat-spreader", "ヒートスプレッダ", "heat-sink",
+    "substrate", "放熱基板", "baseplate", "ceramic-substrate",
+    "packaging", "package", "power-module",
+    "server", "data-center", "aerospace", "high-power",
+    "cte", "low-cte", "insulating", "dielectric", "anisotropic",
+    "composite", "mmc", "metal-matrix-composite", "ceramics", "セラミックス",
+    "filler", "フィラー", "thermal-sheet", "放熱シート",
+    "wick", "capillary-wick", "die-attach", "ダイアタッチ",
+    "grease", "pad", "graphite", "黒鉛", "cvd", "hemt",
+    "materials", "benchmark", "overview", "taxonomy", "measurement",
+    # OKF / patent structural tags
+    "okf", "epo", "patent", "stub", "example", "synthetic",
+    "workflow", "gotcha", "gotchas", "synergistic", "synergy",
+    "buildlog", "summary", "provenance-v4",
+})
 
 
 @dataclass(frozen=True)
@@ -259,3 +286,311 @@ def pattern_reason(node_count: int, synonym_failure_rate: float | None) -> str:
     if node_count > 500:
         return "node count is above 500"
     return "node count and synonym failure rate are below Pattern B/C triggers"
+
+
+def _target_concepts_for_synonyms(root: Path) -> list[Concept]:
+    all_concepts = [
+        c for c in iter_concepts(root)
+        if "stub" not in {t.strip().casefold() for t in c.tags}
+    ]
+    has_concepts_dir = any(c.rel.startswith("concepts/") for c in all_concepts)
+    if has_concepts_dir:
+        return [
+            c for c in all_concepts
+            if c.rel.startswith("concepts/")
+            and (not c.type or c.type.strip().casefold() == "concept")
+        ]
+    return [
+        c for c in all_concepts
+        if c.type.strip().casefold() == "concept"
+    ]
+
+
+def _slug_initials(slug: str) -> set[str]:
+    parts = [p for p in slug.casefold().split("-") if p]
+    if len(parts) < 2:
+        return set()
+    return {"".join(p[0] for p in parts)}
+
+
+def _resolve_shared_tag_owner(
+    cf: str,
+    holders: list[tuple[str, str, str]],
+) -> str | None:
+    if len(holders) == 1:
+        return holders[0][0]
+    # 1. Exact slug or singular/plural slug match
+    exact = [
+        s for s, _, _ in holders
+        if s.casefold() in (cf, cf + "s", cf.rstrip("s"))
+    ]
+    if len(exact) == 1:
+        return exact[0]
+    # 2. Initialism of multi-word slug (e.g. TIM -> thermal-interface-materials)
+    initials = [s for s, _, _ in holders if cf in _slug_initials(s)]
+    if len(initials) == 1:
+        return initials[0]
+    # 3. Slug starts with "<tag>-"
+    slug_prefix = [
+        s for s, _, _ in holders
+        if s.casefold().startswith(cf + "-")
+    ]
+    if len(slug_prefix) == 1:
+        return slug_prefix[0]
+    # 4. Tag appears as token/suffix in slug AND in title
+    cf_spaced = cf.replace("-", " ")
+    slug_and_title = [
+        s for s, title, _ in holders
+        if (cf in s.casefold().split("-") or s.casefold().endswith("-" + cf))
+        and cf_spaced in title.casefold().replace("-", " ")
+    ]
+    if len(slug_and_title) == 1:
+        return slug_and_title[0]
+    # 5. Tag appears in title of only one holder
+    in_title = [
+        s for s, title, _ in holders
+        if cf_spaced in title.casefold().replace("-", " ")
+    ]
+    if len(in_title) == 1:
+        return in_title[0]
+    # 6. Title starts with the tag
+    title_starts = [
+        s for s, title, _ in holders
+        if title.casefold().startswith(cf)
+    ]
+    if len(title_starts) == 1:
+        return title_starts[0]
+    return None
+
+
+def extract_concept_synonym_groups(
+    root: str | Path,
+    *,
+    exclude_tags: Iterable[str] | None = None,
+) -> list[list[str]]:
+    """Extract deterministic synonym groups from concept notes in ``root``."""
+    root_path = Path(root)
+    excluded = {t.strip().casefold() for t in DEFAULT_EXCLUDE_TAGS}
+    if exclude_tags is not None:
+        excluded |= {
+            " ".join(str(t).split()).casefold()
+            for t in exclude_tags
+            if str(t).strip()
+        }
+
+    concepts = _target_concepts_for_synonyms(root_path)
+    concept_rows: list[tuple[str, str, list[str]]] = []
+    tag_holders: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
+
+    for concept in concepts:
+        slug = concept.path.stem.strip()
+        title = concept.title
+        norm_tags = [
+            " ".join(str(t).split())
+            for t in concept.tags
+            if isinstance(t, str) and str(t).strip()
+        ]
+        concept_rows.append((slug, title, norm_tags))
+        seen_in_concept: set[str] = set()
+        for candidate in [slug, *norm_tags]:
+            cf = candidate.casefold()
+            if not candidate or cf in excluded or cf in seen_in_concept:
+                continue
+            seen_in_concept.add(cf)
+            tag_holders[cf].append((slug, title, candidate))
+
+    owner_of: dict[str, str] = {}
+    for cf, holders in tag_holders.items():
+        owner = _resolve_shared_tag_owner(cf, holders)
+        if owner is not None:
+            owner_of[cf] = owner
+
+    groups: list[list[str]] = []
+    for slug, _title, norm_tags in concept_rows:
+        tag_casing_map: dict[str, str] = {}
+        for t in norm_tags:
+            if t.casefold() not in tag_casing_map:
+                tag_casing_map[t.casefold()] = t
+        first_term = tag_casing_map.get(slug.casefold(), slug)
+        candidates = [first_term, *norm_tags]
+        group: list[str] = []
+        seen: set[str] = set()
+        for raw_term in candidates:
+            term = " ".join(raw_term.split())
+            cf = term.casefold()
+            if not term or cf in seen or cf in excluded:
+                continue
+            if owner_of.get(cf) == slug:
+                seen.add(cf)
+                group.append(term)
+        if len(group) >= 2:
+            groups.append(group)
+    return groups
+
+
+def _normalize_group_list(raw_groups: Any, *, label: str) -> list[list[str]]:
+    if not isinstance(raw_groups, list):
+        raise ValueError(f"{label} must be a list of alias groups")
+    normalized: list[list[str]] = []
+    seen_global: set[str] = set()
+    for number, raw_group in enumerate(raw_groups, 1):
+        if not isinstance(raw_group, list) or len(raw_group) < 2:
+            raise ValueError(
+                f"{label} group {number} must be a list of at least 2 terms"
+            )
+        group: list[str] = []
+        for raw_term in raw_group:
+            if not isinstance(raw_term, str) or not raw_term.strip():
+                raise ValueError(
+                    f"{label} group {number} contains an empty term"
+                )
+            term = " ".join(raw_term.split())
+            cf = term.casefold()
+            if cf in seen_global:
+                raise ValueError(
+                    f"duplicate term {term!r} in {label}"
+                )
+            seen_global.add(cf)
+            group.append(term)
+        normalized.append(group)
+    return normalized
+
+
+def _load_existing_manual_groups(synonyms_path: Path) -> list[list[str]]:
+    if not synonyms_path.exists():
+        return []
+    try:
+        data = json.loads(synonyms_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"{synonyms_path}: invalid synonyms JSON: {exc.msg}"
+        ) from exc
+
+    if isinstance(data, list):
+        # Legacy hand-written array format -> migrate to manual_groups
+        return _normalize_group_list(data, label="manual_groups")
+    if isinstance(data, dict):
+        if "manual_groups" in data or "generated_groups" in data:
+            raw_manual = data.get("manual_groups", [])
+            return _normalize_group_list(raw_manual, label="manual_groups")
+        if "groups" in data:
+            # Legacy dict format without generated_groups -> migrate to manual_groups
+            return _normalize_group_list(data["groups"], label="manual_groups")
+    raise ValueError("synonyms must be a list of alias groups or a sync object")
+
+
+def _merge_manual_and_generated_groups(
+    manual_groups: list[list[str]],
+    generated_groups: list[list[str]],
+) -> list[list[str]]:
+    merged: list[list[str]] = [list(g) for g in manual_groups]
+    term_to_group_idx: dict[str, int] = {}
+    for idx, group in enumerate(merged):
+        for term in group:
+            term_to_group_idx[term.casefold()] = idx
+
+    for gen_group in generated_groups:
+        matching_indices = sorted({
+            term_to_group_idx[term.casefold()]
+            for term in gen_group
+            if term.casefold() in term_to_group_idx
+        })
+        if not matching_indices:
+            new_idx = len(merged)
+            merged.append(list(gen_group))
+            for term in gen_group:
+                term_to_group_idx[term.casefold()] = new_idx
+        elif len(matching_indices) == 1:
+            target_idx = matching_indices[0]
+            for term in gen_group:
+                cf = term.casefold()
+                if cf not in term_to_group_idx:
+                    merged[target_idx].append(term)
+                    term_to_group_idx[cf] = target_idx
+        else:
+            remaining = [
+                term for term in gen_group
+                if term.casefold() not in term_to_group_idx
+            ]
+            if len(remaining) >= 2:
+                new_idx = len(merged)
+                merged.append(remaining)
+                for term in remaining:
+                    term_to_group_idx[term.casefold()] = new_idx
+
+    return merged
+
+
+def plan_synonyms_sync(
+    root: str | Path,
+    *,
+    synonyms_path: str | Path | None = None,
+    exclude_tags: Iterable[str] | None = None,
+) -> tuple[dict[str, Any], str]:
+    """Build the deterministic ``synonyms.json`` payload and serialized text."""
+    root_path = Path(root)
+    target = (
+        Path(synonyms_path)
+        if synonyms_path is not None
+        else root_path / "synonyms.json"
+    )
+    manual_groups = _load_existing_manual_groups(target)
+    generated_groups = extract_concept_synonym_groups(
+        root_path, exclude_tags=exclude_tags
+    )
+    groups = _merge_manual_and_generated_groups(
+        manual_groups, generated_groups
+    )
+    payload: dict[str, Any] = {
+        "groups": groups,
+        "generated_groups": generated_groups,
+        "manual_groups": manual_groups,
+    }
+    if groups:
+        SynonymIndex.from_data(payload, path=str(target))
+    content = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    return payload, content
+
+
+def sync_synonyms(
+    root: str | Path,
+    *,
+    synonyms_path: str | Path | None = None,
+    exclude_tags: Iterable[str] | None = None,
+    check: bool = False,
+) -> dict[str, Any]:
+    """Synchronize or check ``<wiki>/synonyms.json`` deterministically."""
+    root_path = Path(root)
+    target = (
+        Path(synonyms_path)
+        if synonyms_path is not None
+        else root_path / "synonyms.json"
+    )
+    payload, content = plan_synonyms_sync(
+        root_path, synonyms_path=target, exclude_tags=exclude_tags
+    )
+    existing_content: str | None = None
+    if target.exists():
+        existing_content = target.read_text(encoding="utf-8")
+    stale = existing_content != content
+    written = False
+    if not check and stale:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(target.name + ".tmp")
+        try:
+            tmp.write_text(content, encoding="utf-8")
+            os.replace(tmp, target)
+        finally:
+            if tmp.exists():
+                tmp.unlink()
+        written = True
+
+    return {
+        "ok": not (check and stale),
+        "path": str(target),
+        "written": written,
+        "stale": stale if check else False,
+        "group_count": len(payload["groups"]),
+        "generated_count": len(payload["generated_groups"]),
+        "manual_count": len(payload["manual_groups"]),
+    }

@@ -291,23 +291,60 @@ class ValidationTests(unittest.TestCase):
 
     def test_provenance_p6_web_sources_require_retrieved(self):
         write(self.root, "index.md", "# Index\n")
-        # missing retrieved on web-type sources
-        for i, kind in enumerate(["product-page", "press-release", "news", "web"]):
-            write(self.root, f"w{i}.md", node(
+        web_kinds = [
+            "datasheet",
+            "product-page",
+            "press-release",
+            "standard",
+            "news",
+            "web",
+            "manual",
+        ]
+        # 1. Missing retrieved= on each of the 7 web-type sources -> P6 warns
+        for i, kind in enumerate(web_kinds):
+            write(self.root, f"w_missing_{i}.md", node(
                 f"type: Concept\nbasis: external\nsources: ['{kind}:https://example.com/{i}']\n"
                 "verified_at: '2026-11-07'\n",
                 "# W\n",
             ))
-        # paper does not require retrieved
-        write(self.root, "paper.md", node(
-            "type: Concept\nbasis: external\nsources: ['paper:10.1234/5678 issued=2024-01-01']\n"
-            "verified_at: '2026-11-07'\n",
-            "# Paper\n",
-        ))
+            # 2. Present retrieved= on each of the 7 web-type sources -> no P6 warning
+            write(self.root, f"w_ok_{i}.md", node(
+                f"type: Concept\nbasis: external\n"
+                f"sources: ['{kind}:https://example.com/{i} retrieved=2026-11-07']\n"
+                "verified_at: '2026-11-07'\n",
+                "# W OK\n",
+            ))
+        # 3. Non-web kinds do not require retrieved=
+        non_web_sources = [
+            "patent-biblio:EP1 via=epo-ops",
+            "patent-claims:EP1 via=epo-ops",
+            "patent-legal:EP1 via=epo-ops",
+            "patent-family:EP1 via=epo-ops",
+            "paper:10.1234/5678 issued=2024-01-01",
+            "preprint:arXiv:2401.12345 issued=2024-01-15",
+        ]
+        for j, src in enumerate(non_web_sources):
+            write(self.root, f"non_web_{j}.md", node(
+                f"type: Concept\nbasis: external\nsources: ['{src}']\n"
+                "verified_at: '2026-11-07'\n",
+                "# Non-Web\n",
+            ))
+
         report = validate_wiki(self.root)
-        for i in range(4):
-            self.assertTrue(any(f"w{i}.md: [P6]" in w for w in report.warnings))
-        self.assertFalse(any("paper.md: [P6]" in w for w in report.warnings))
+        for i, kind in enumerate(web_kinds):
+            self.assertTrue(
+                any(f"w_missing_{i}.md: [P6] web source {kind}:" in w for w in report.warnings),
+                f"expected [P6] for {kind} without retrieved=",
+            )
+            self.assertFalse(
+                any(f"w_ok_{i}.md: [P6]" in w for w in report.warnings),
+                f"unexpected [P6] for {kind} with retrieved=",
+            )
+        for j in range(len(non_web_sources)):
+            self.assertFalse(
+                any(f"non_web_{j}.md: [P6]" in w for w in report.warnings),
+                f"unexpected [P6] for non_web_{j}.md",
+            )
 
     def test_provenance_p7_unknown_source_kind_warns_without_failing(self):
         write(self.root, "index.md", "# Index\n")
