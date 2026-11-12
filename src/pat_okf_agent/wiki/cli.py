@@ -109,6 +109,15 @@ def _parser() -> argparse.ArgumentParser:
                           help="expand query aliases from synonyms.json")
     p_search.add_argument("--synonyms", default=None,
                           help="alias file (default: <wiki>/synonyms.json)")
+    p_search.add_argument("--type", action="append", default=None,
+                          help="filter by note type (e.g. concept, patent; repeatable/comma-separated)")
+    p_search.add_argument("--scope", action="append", default=None,
+                          choices=("taxonomy", "workflow", "synergistic", "gotchas"),
+                          help="filter by OKF scope (repeatable)")
+    p_search.add_argument("--include-admin", action="store_true", default=False,
+                          help="include admin/aggregate notes (BUILDLOG, SUMMARY, index)")
+    p_search.add_argument("--no-admin", dest="include_admin", action="store_false",
+                          help="exclude admin/aggregate notes (default)")
     p_search.add_argument("--json", action="store_true")
 
     p_trav = sub.add_parser("traverse", help="weighted graph traversal")
@@ -386,7 +395,28 @@ def _dispatch(args: argparse.Namespace) -> int:
 
     if args.command == "search":
         backend = _backend_from_args(args, args.dir)
-        hits = backend.search(args.query, limit=args.limit)
+        doc_types = []
+        if getattr(args, "type", None):
+            for t_arg in args.type:
+                for item in t_arg.split(","):
+                    item_clean = item.strip().casefold()
+                    if item_clean:
+                        doc_types.append(item_clean)
+        scopes = getattr(args, "scope", None)
+        include_admin = getattr(args, "include_admin", False)
+
+        search_kwargs: dict[str, Any] = {"limit": args.limit}
+        if doc_types:
+            search_kwargs["doc_type"] = doc_types
+        if scopes:
+            search_kwargs["scope"] = scopes
+        if include_admin:
+            search_kwargs["include_admin"] = include_admin
+
+        try:
+            hits = backend.search(args.query, **search_kwargs)
+        except TypeError:
+            hits = backend.search(args.query, limit=args.limit)
         if args.json:
             print(json.dumps([hit.as_dict() for hit in hits],
                              ensure_ascii=False, indent=2))
