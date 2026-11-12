@@ -11,8 +11,10 @@ from pat_okf_agent.wiki.synonyms import (
     DEFAULT_EXCLUDE_TAGS,
     ExpandedSearchBackend,
     SynonymIndex,
+    classify_tag_tier,
     evaluate_synonyms,
     extract_concept_synonym_groups,
+    inventory_wiki_tags,
     load_eval_queries,
     pattern_reason,
     plan_synonyms_sync,
@@ -315,6 +317,81 @@ class SynonymSyncTests(unittest.TestCase):
         idx = SynonymIndex.from_path(syn_path)
         self.assertIn("アルシック", idx.expand_query("AlSiC"))
         self.assertIn("アルミニウム炭化ケイ素複合材", idx.expand_query("AlSiC"))
+
+    def test_sync_synonyms_preserves_tier_a_tags(self):
+        write(
+            self.root,
+            "concepts/alsic.md",
+            "type: Concept\ntitle: 'AlSiC'\ntags: [AlSiC, aluminum-silicon-carbide]\n",
+        )
+        sync_synonyms(self.root)
+        syn_path = self.root / "synonyms.json"
+        data = json.loads(syn_path.read_text(encoding="utf-8"))
+        data["tier_a_tags"] = ["custom-tier-a", "alsic"]
+        syn_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+        sync_synonyms(self.root)
+        updated = json.loads(syn_path.read_text(encoding="utf-8"))
+        self.assertIn("tier_a_tags", updated)
+        self.assertEqual(updated["tier_a_tags"], ["custom-tier-a", "alsic"])
+
+    def test_classify_tag_tier(self):
+        # Excluded tags -> None
+        self.assertIsNone(classify_tag_tier("cooling"))
+        self.assertIsNone(classify_tag_tier("thermal-management"))
+        self.assertIsNone(classify_tag_tier("patent"))
+
+        # Concept slug match -> Tier A
+        self.assertEqual(
+            classify_tag_tier("spray-cooling", concept_slug="spray-cooling"),
+            "Tier A",
+        )
+
+        # tier_a_list match -> Tier A
+        self.assertEqual(
+            classify_tag_tier("direct-bond-copper", tier_a_list=["direct-bond-copper", "dbc"]),
+            "Tier A",
+        )
+
+        # manual_groups match -> Tier A
+        self.assertEqual(
+            classify_tag_tier("al-sic", manual_groups=[["AlSiC", "al-sic"]]),
+            "Tier A",
+        )
+
+        # Descriptive tag not matching any Tier A rule or exclude -> Tier B
+        self.assertEqual(
+            classify_tag_tier("dielectric-fluid", concept_slug="spray-cooling"),
+            "Tier B",
+        )
+
+    def test_inventory_wiki_tags(self):
+        write(
+            self.root,
+            "concepts/spray-cooling.md",
+            "type: Concept\ntitle: 'Spray Cooling'\ntags: [spray-cooling, cooling, dielectric-fluid]\n",
+        )
+        write(
+            self.root,
+            "concepts/alsic.md",
+            "type: Concept\ntitle: 'AlSiC'\ntags: [alsic, thermal, mmc]\n",
+        )
+        # index.md should be ignored
+        write(
+            self.root,
+            "concepts/index.md",
+            "type: Index\ntitle: 'Index'\ntags: [index-tag]\n",
+        )
+
+        inv = inventory_wiki_tags(self.root)
+        self.assertEqual(inv["total_concepts"], 2)
+        # Tags: spray-cooling, cooling, dielectric-fluid, alsic, thermal, mmc (cooling, thermal, mmc are excluded)
+        self.assertIn("spray-cooling", inv["tags_by_tier"]["Tier A"])
+        self.assertIn("alsic", inv["tags_by_tier"]["Tier A"])
+        self.assertIn("dielectric-fluid", inv["tags_by_tier"]["Tier B"])
+        self.assertIn("cooling", inv["tags_by_tier"]["Tier 外"])
+        self.assertEqual(inv["tier_counts"]["Tier B"], 1)
+        self.assertEqual(inv["tag_frequencies"]["dielectric-fluid"], 1)
 
 
 if __name__ == "__main__":
