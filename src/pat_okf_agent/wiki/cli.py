@@ -305,9 +305,18 @@ def _parser() -> argparse.ArgumentParser:
         help="output JSON result",
     )
     p_cand.add_argument(
-        "--strict",
-        action="store_true",
-        help="exit 1 if any candidate has hard collision",
+        "--fail-on",
+        action="append",
+        choices=[
+            "filename",
+            "synonym",
+            "synonym-manual",
+            "synonym-generated",
+            "tag",
+            "verbatim",
+        ],
+        default=[],
+        help="exit 1 if specified relation kind is detected (repeatable)",
     )
 
     return parser
@@ -781,9 +790,11 @@ def _dispatch(args: argparse.Namespace) -> int:
             print(
                 f"Scanned: {sc.get('scanned_concept_files', 0)} concepts "
                 f"({sc.get('scanned_concept_tags_total', 0)} tags: "
-                f"{sc.get('scanned_tier_a_tags', 0)} Tier A, "
-                f"{sc.get('scanned_tier_b_tags', 0)} Tier B), "
-                f"{sc.get('scanned_synonym_groups', 0)} synonym groups"
+                f"{sc.get('scanned_fixed_vocabulary_tags', 0)} fixed vocabulary, "
+                f"{sc.get('scanned_free_tags', 0)} free), "
+                f"{sc.get('scanned_synonym_groups', 0)} synonym groups "
+                f"({sc.get('scanned_synonym_groups_manual', 0)} manual, "
+                f"{sc.get('scanned_synonym_groups_generated', 0)} generated)"
             )
             syn_st = "present" if inp.get("synonyms_json_present") else "missing"
             sv_st = "present" if inp.get("source_verify_cache_present") else "missing"
@@ -796,42 +807,41 @@ def _dispatch(args: argparse.Namespace) -> int:
                     if cand.established_or_niche
                     else ""
                 )
-                print(f"  {i}. **{cand.slug}**{role_label} -> status: {cand.status}")
-                if cand.hard_collisions:
-                    for hc in cand.hard_collisions:
-                        print(
-                            f"     - [HARD REJECTION] {hc.collision_type} collision "
-                            f"with '{hc.matched_term}' in {hc.target_file}"
-                        )
+                print(f"  {i}. **{cand.slug}**{role_label}")
+                rel = cand.relations
+                has_rel = bool(rel.name_occupied or rel.synonyms or rel.tag_on)
+                if not has_rel:
+                    print("     - relations: none")
                 else:
-                    print("     - Hard collisions: none")
-
-                if cand.tag_collisions:
-                    for tc in cand.tag_collisions:
-                        badge = (
-                            "[WARNING: Tier A Tag Collision]"
-                            if tc.tier == "Tier A"
-                            else "[NOTE: Tier B Tag Collision]"
-                        )
+                    if rel.name_occupied:
                         print(
-                            f"     - {badge} tag '{tc.colliding_tag}' on "
-                            f"{tc.existing_concept_file} ({tc.message})"
+                            f"     - name_occupied: matched '{rel.name_occupied['matched_name']}' "
+                            f"in {rel.name_occupied['file']}"
                         )
-                else:
-                    print("     - Tag collisions: none")
+                    for s in rel.synonyms:
+                        owner_str = f" (owner: {s['owner']})" if s.get("owner") else ""
+                        print(
+                            f"     - synonym ({s['kind']}): matched '{s['matched_term']}' "
+                            f"in group {s['group']}{owner_str}"
+                        )
+                    for t in rel.tag_on:
+                        print(
+                            f"     - tag_on: '{t['tag']}' on "
+                            f"{t['file']} (provenance: {t['provenance']})"
+                        )
 
                 if cand.verbatim_check:
                     vc = cand.verbatim_check
                     if not vc.get("claimed_emergence", True):
-                        print("     - Verbatim: [SKIP: Taxonomy Gap] (no emergence claimed)")
+                        print("     - verbatim: taxonomy-gap (no emergence claimed)")
                     elif vc.get("verbatim_found"):
                         print(
-                            f"     - Verbatim: [PASS: Verbatim Matched] "
+                            f"     - verbatim: match "
                             f"({vc.get('match_count')} hits in {vc.get('cited_target')}) {vc.get('snippet')}"
                         )
                     else:
                         print(
-                            f"     - Verbatim: [FAIL: Verbatim Miss] "
+                            f"     - verbatim: miss "
                             f"(term '{vc.get('quoted_term')}' in {vc.get('cited_target')}: {vc.get('snippet')})"
                         )
                 print()
@@ -839,18 +849,39 @@ def _dispatch(args: argparse.Namespace) -> int:
             sm = result.summary
             print(
                 f"Summary: {sm.get('total_candidates', 0)} candidates "
-                f"({sm.get('hard_collision_count', 0)} hard collisions, "
-                f"{sm.get('tier_a_warning_count', 0)} Tier A warnings, "
-                f"{sm.get('tier_b_note_count', 0)} Tier B notes, "
+                f"({sm.get('name_occupied_count', 0)} name occupied, "
+                f"{sm.get('synonym_manual_count', 0)} synonym manual, "
+                f"{sm.get('synonym_generated_count', 0)} synonym generated, "
+                f"{sm.get('tag_relation_count', 0)} tag relations, "
                 f"{sm.get('verbatim_miss_count', 0)} verbatim misses)"
             )
             print(
-                "* Tag collisions are recorded as warnings per PR #12 policy. "
-                "Do not reject candidate solely due to tag collision; document in Tag collisions: field."
+                "* Note: This tool returns neutral relations only; severity and weighting "
+                "are caller decisions. Use --fail-on <kind> for automated assertions."
             )
 
-        if args.strict and result.summary.get("hard_collision_count", 0) > 0:
-            return 1
+        fail_kinds = set(args.fail_on or [])
+        if fail_kinds:
+            for cand in result.candidates:
+                if "filename" in fail_kinds and cand.relations.name_occupied is not None:
+                    return 1
+                if "synonym" in fail_kinds and len(cand.relations.synonyms) > 0:
+                    return 1
+                if "synonym-manual" in fail_kinds and any(
+                    s.get("kind") == "manual" for s in cand.relations.synonyms
+                ):
+                    return 1
+                if "synonym-generated" in fail_kinds and any(
+                    s.get("kind") == "generated" for s in cand.relations.synonyms
+                ):
+                    return 1
+                if "tag" in fail_kinds and len(cand.relations.tag_on) > 0:
+                    return 1
+                if "verbatim" in fail_kinds and (
+                    cand.verbatim_check is not None
+                    and not cand.verbatim_check.get("verbatim_found", True)
+                ):
+                    return 1
         return 0
 
     return 2
