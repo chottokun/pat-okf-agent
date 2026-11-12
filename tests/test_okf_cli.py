@@ -875,6 +875,65 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code2, 2)
         self.assertIn("error: candidate slugs or --proposal required", err2)
 
+    def test_search_filters_type_scope_admin(self):
+        write(self.root, "concepts/vapor-chamber.md", node(
+            "type: Concept\n"
+            "scope: taxonomy\n"
+            "title: Vapor Chamber Concept\n",
+            "# Vapor Chamber Concept\nCooling device.\n",
+        ))
+        write(self.root, "patents/EP1.md", node(
+            "type: Patent\n"
+            "scope: taxonomy\n"
+            "title: Vapor Chamber Patent\n",
+            "# Vapor Chamber Patent\nPatent publication.\n",
+        ))
+        write(self.root, "concepts/workflow-note.md", node(
+            "type: Concept\n"
+            "scope: workflow\n"
+            "title: Vapor Chamber Workflow\n",
+            "# Vapor Chamber Workflow\nProcess step.\n",
+        ))
+        write(self.root, "BUILDLOG.md", node(
+            "type: Note\n"
+            "title: Build Log with Vapor Chamber\n",
+            "# Build Log\nDetails.\n",
+        ))
+
+        # Default: no admin files
+        code, out, _ = self.run_cli("search", self.root, "Vapor Chamber", "--json")
+        self.assertEqual(code, 0)
+        nodes = [h["node"] for h in json.loads(out)]
+        self.assertIn("concepts/vapor-chamber.md", nodes)
+        self.assertIn("patents/EP1.md", nodes)
+        self.assertNotIn("BUILDLOG.md", nodes)
+
+        # --include-admin includes BUILDLOG.md
+        code, out, _ = self.run_cli("search", self.root, "Vapor Chamber", "--include-admin", "--json")
+        self.assertEqual(code, 0)
+        nodes = [h["node"] for h in json.loads(out)]
+        self.assertIn("BUILDLOG.md", nodes)
+
+        # --type concept excludes patents
+        code, out, _ = self.run_cli("search", self.root, "Vapor Chamber", "--type", "concept", "--json")
+        self.assertEqual(code, 0)
+        nodes = [h["node"] for h in json.loads(out)]
+        self.assertIn("concepts/vapor-chamber.md", nodes)
+        self.assertIn("concepts/workflow-note.md", nodes)
+        self.assertNotIn("patents/EP1.md", nodes)
+
+        # --type patent excludes concepts
+        code, out, _ = self.run_cli("search", self.root, "Vapor Chamber", "--type", "patent", "--json")
+        self.assertEqual(code, 0)
+        nodes = [h["node"] for h in json.loads(out)]
+        self.assertEqual(nodes, ["patents/EP1.md"])
+
+        # --scope workflow filters by scope
+        code, out, _ = self.run_cli("search", self.root, "Vapor Chamber", "--scope", "workflow", "--json")
+        self.assertEqual(code, 0)
+        nodes = [h["node"] for h in json.loads(out)]
+        self.assertEqual(nodes, ["concepts/workflow-note.md"])
+
 
 if __name__ == "__main__":
     unittest.main()

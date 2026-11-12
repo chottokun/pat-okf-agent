@@ -155,7 +155,12 @@ class SynonymIndex:
 
 
 class ExpandedSearchBackend:
-    """Merge synonym-expanded searches using the best score per node."""
+    """Inline-weighted synonym expansion backend.
+
+    Instead of independent variant searches with max-merge, synonyms are passed
+    as auxiliary terms with attenuated weights (0.5x), preventing synonym noise
+    from dominating the primary query.
+    """
 
     def __init__(self, backend: Any, index: SynonymIndex, *,
                  max_variants: int = 8):
@@ -163,23 +168,25 @@ class ExpandedSearchBackend:
         self.index = index
         self.max_variants = max_variants
 
-    def search(self, query: str, *, limit: int = 10) -> list[SearchHit]:
+    def search(self, query: str, *, limit: int = 10, **kwargs) -> list[SearchHit]:
         if limit <= 0 or not query.strip():
             return []
-        variants = self.index.expand_query(
-            query, max_variants=self.max_variants)
-        best: dict[str, SearchHit] = {}
-        for variant in variants:
-            for hit in self.backend.search(
-                    variant, limit=max(limit, min(limit * 2, 100))):
-                previous = best.get(hit.node)
-                if previous is None or hit.score > previous.score:
-                    best[hit.node] = hit
-        hits = sorted(best.values(), key=lambda hit: (-hit.score, hit.node))
-        return hits[:limit]
+        aux_terms: list[str] = []
+        for matched_term, group in self.index.matching_groups(query):
+            for term in group:
+                if (term.casefold() != matched_term.casefold() and
+                        term.casefold() not in query.casefold()):
+                    if term not in aux_terms:
+                        aux_terms.append(term)
+        try:
+            return self.backend.search(
+                query, limit=limit, aux_terms=aux_terms, **kwargs)
+        except TypeError:
+            # Fallback if backend does not support aux_terms
+            return self.backend.search(query, limit=limit, **kwargs)
 
-    def search_keywords(self, query: str, top_k: int = 3) -> list[str]:
-        return [hit.node for hit in self.search(query, limit=top_k)]
+    def search_keywords(self, query: str, top_k: int = 3, **kwargs) -> list[str]:
+        return [hit.node for hit in self.search(query, limit=top_k, **kwargs)]
 
 
 def load_eval_queries(path: str | Path) -> list[dict[str, Any]]:

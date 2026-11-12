@@ -60,6 +60,68 @@ class LocalSearchTests(unittest.TestCase):
         self.assertEqual(hit.node, "b.md")
         self.assertIn("film", hit.snippet.lower())
 
+    def test_body_saturation_cap_prevents_body_heavy_outranking_title(self):
+        write(self.root, "patent.md", "type: Patent\ntitle: Unrelated Device\n",
+              "Introductory unrelated background.\n\n" + "vapor chamber " * 100 + "\n")
+        write(self.root, "concept.md", "type: Concept\ntitle: Vapor Chamber\n",
+              "A thermal ground plane.\n")
+        hits = self.backend.search("vapor chamber")
+        self.assertEqual(hits[0].node, "concept.md")
+        patent_hit = next(h for h in hits if h.node == "patent.md")
+        self.assertLessEqual(patent_hit.score, 10.0)
+
+    def test_admin_files_excluded_by_default(self):
+        write(self.root, "BUILDLOG.md", "title: Build Log\n",
+              "amorphous metallic glass amorphous\n")
+        write(self.root, "SUMMARY.md", "title: Summary\n",
+              "amorphous metallic glass amorphous\n")
+        hits = self.backend.search("amorphous")
+        nodes = [h.node for h in hits]
+        self.assertNotIn("BUILDLOG.md", nodes)
+        self.assertNotIn("SUMMARY.md", nodes)
+
+        hits_admin = self.backend.search("amorphous", include_admin=True)
+        admin_nodes = [h.node for h in hits_admin]
+        self.assertIn("BUILDLOG.md", admin_nodes)
+        self.assertIn("SUMMARY.md", admin_nodes)
+
+    def test_headings_and_lead_scoring(self):
+        write(self.root, "hl.md", "type: Concept\ntitle: Thermal Device\n",
+              "## Vapor Chamber\nThis lead paragraph describes cooling.\n")
+        write(self.root, "body_only.md", "type: Concept\ntitle: Thermal Device 2\n",
+              "Introduction text here.\n\nLater in body vapor chamber appears.\n")
+        hits = self.backend.search("vapor chamber")
+        score_hl = next(h.score for h in hits if h.node == "hl.md")
+        score_body = next(h.score for h in hits if h.node == "body_only.md")
+        self.assertGreater(score_hl, score_body)
+
+    def test_phrase_bonus(self):
+        write(self.root, "phrase.md", "type: Note\ntitle: Heat Spreader Board\n",
+              "Device details.\n")
+        write(self.root, "split.md", "type: Note\ntitle: Spreader of Excess Heat\n",
+              "Device details.\n")
+        hits = self.backend.search("heat spreader")
+        self.assertEqual(hits[0].node, "phrase.md")
+        self.assertGreater(hits[0].score, hits[1].score + 40.0)
+
+    def test_deprecated_attenuation(self):
+        write(self.root, "active.md", "type: Note\ntitle: Dielectric Liquid\n",
+              "Coolant body.\n")
+        write(self.root, "dep.md",
+              "type: Note\ntitle: Dielectric Liquid\ntags: [deprecated]\n",
+              "Coolant body.\n")
+        hits = self.backend.search("Dielectric Liquid")
+        active_score = next(h.score for h in hits if h.node == "active.md")
+        dep_score = next(h.score for h in hits if h.node == "dep.md")
+        self.assertAlmostEqual(dep_score, active_score * 0.3, places=2)
+
+    def test_inline_synonym_auxiliary_terms(self):
+        write(self.root, "syn_target.md", "type: Note\ntitle: Vapor Chamber\n",
+              "Device.\n")
+        # Query is "均熱板", with auxiliary term "vapor chamber"
+        hits = self.backend.search("均熱板", aux_terms=["vapor chamber"])
+        self.assertIn("syn_target.md", [h.node for h in hits])
+
     def test_ripgrep_candidates_are_used_with_fallback(self):
         with patch("pat_okf_agent.wiki.search.shutil.which",
                    return_value="/usr/bin/rg"), patch(
