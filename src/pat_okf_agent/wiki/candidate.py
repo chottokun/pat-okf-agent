@@ -1,67 +1,78 @@
 """Candidate screening and evidence verification for OKF wiki.
 
-Implements deterministic deduplication, filename/synonym hard collision detection,
-Tier A/B tag collision scanning, and verbatim evidence checks for candidate concepts.
+Implements deterministic relations inspection (name occupation, synonym membership,
+tag provenance) and verbatim evidence checks for candidate concepts.
 """
 from __future__ import annotations
 
 import json
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
 from ..epo import _safe_name
-from .model import Concept, load_concept
+from .model import load_concept
 from .synonyms import (
     DEFAULT_EXCLUDE_TAGS,
-    SynonymIndex,
     _load_existing_manual_groups,
     _load_existing_tier_a_tags,
     classify_tag_tier,
 )
 
 
+def _load_existing_generated_groups(synonyms_path: Path) -> list[list[str]]:
+    """Load generated_groups symmetrically to _load_existing_manual_groups without raising."""
+    if not synonyms_path.exists():
+        return []
+    try:
+        data = json.loads(synonyms_path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if isinstance(data, dict):
+        raw_gen = data.get("generated_groups", [])
+        if isinstance(raw_gen, list):
+            groups: list[list[str]] = []
+            for raw_group in raw_gen:
+                if isinstance(raw_group, list) and len(raw_group) >= 2:
+                    group = [
+                        " ".join(t.split())
+                        for t in raw_group
+                        if isinstance(t, str) and t.strip()
+                    ]
+                    if len(group) >= 2:
+                        groups.append(group)
+            return groups
+    return []
+
+
 @dataclass
-class HardCollision:
-    collision_type: str  # "filename" | "synonym"
-    matched_term: str
-    target_file: str
+class CandidateRelations:
+    name_occupied: dict[str, str] | None = None
+    synonyms: list[dict[str, Any]] = field(default_factory=list)
+    tag_on: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass
-class TagCollision:
-    colliding_tag: str
-    existing_concept_slug: str
-    existing_concept_file: str
-    tier: str  # "Tier A" | "Tier B"
-    severity: str  # "warning" | "note"
-    message: str
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        return {
+            "name_occupied": self.name_occupied,
+            "synonyms": self.synonyms,
+            "tag_on": self.tag_on,
+        }
 
 
 @dataclass
 class CandidateCheckItem:
     slug: str
     established_or_niche: str | None = None
-    hard_collisions: list[HardCollision] = field(default_factory=list)
-    tag_collisions: list[TagCollision] = field(default_factory=list)
+    relations: CandidateRelations = field(default_factory=CandidateRelations)
     verbatim_check: dict[str, Any] | None = None
-    status: str = "pass"  # "pass" | "pass_with_warnings" | "hard_collision"
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "slug": self.slug,
             "established_or_niche": self.established_or_niche,
-            "hard_collisions": [hc.to_dict() for hc in self.hard_collisions],
-            "tag_collisions": [tc.to_dict() for tc in self.tag_collisions],
+            "relations": self.relations.to_dict(),
             "verbatim_check": self.verbatim_check,
-            "status": self.status,
         }
 
 
@@ -75,7 +86,7 @@ class CandidateCheckResult:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "version": "0.1",
+            "version": "0.2",
             "wiki_root": self.wiki_root,
             "inputs_status": self.inputs_status,
             "scan_completeness": self.scan_completeness,
@@ -85,7 +96,7 @@ class CandidateCheckResult:
 
 
 class CandidateChecker:
-    """Deterministic candidate checker verifying collisions and evidence."""
+    """Deterministic candidate checker collecting relations and verifying evidence."""
 
     def __init__(self, wiki_root: str | Path):
         self.wiki_root = Path(wiki_root).resolve()
@@ -94,35 +105,37 @@ class CandidateChecker:
 
         # Load existing concept notes
         self._concepts: list[tuple[str, Path, list[str]]] = []
+        self._concept_slug_by_norm: dict[str, str] = {}
         if self.concepts_dir.exists():
             for p in sorted(self.concepts_dir.glob("*.md")):
                 if p.name == "index.md" or not p.is_file():
                     continue
+                stem = p.stem
+                norm_stem = stem.replace("-", " ").casefold()
+                self._concept_slug_by_norm[norm_stem] = stem
+                self._concept_slug_by_norm[stem.casefold()] = stem
                 try:
                     concept = load_concept(p, self.wiki_root)
-                    self._concepts.append((p.stem, p, list(concept.tags)))
+                    self._concepts.append((stem, p, list(concept.tags)))
                 except Exception:
                     # Fallback to empty tags if corrupt
-                    self._concepts.append((p.stem, p, []))
+                    self._concepts.append((stem, p, []))
 
         # Load synonyms
-        self._synonym_index: SynonymIndex | None = None
         self._manual_groups: list[list[str]] = []
+        self._generated_groups: list[list[str]] = []
         self._tier_a_tags: list[str] = []
-        self._all_synonym_terms: set[str] = set()
 
         if self.synonyms_path.exists():
             try:
-                self._synonym_index = SynonymIndex.from_path(self.synonyms_path)
-                for group in self._synonym_index.groups:
-                    for term in group:
-                        self._all_synonym_terms.add(
-                            term.strip().replace("-", " ").casefold()
-                        )
+                self._manual_groups = _load_existing_manual_groups(self.synonyms_path)
             except Exception:
                 pass
             try:
-                self._manual_groups = _load_existing_manual_groups(self.synonyms_path)
+                self._generated_groups = _load_existing_generated_groups(self.synonyms_path)
+            except Exception:
+                pass
+            try:
                 loaded_tier_a = _load_existing_tier_a_tags(self.synonyms_path)
                 if loaded_tier_a is not None:
                     self._tier_a_tags = loaded_tier_a
@@ -156,8 +169,8 @@ class CandidateChecker:
     def scan_completeness(self) -> dict[str, Any]:
         """Collect metrics on the files scanned during check."""
         total_tags = sum(len(tags) for _, _, tags in self._concepts)
-        tier_a_count = 0
-        tier_b_count = 0
+        fixed_count = 0
+        free_count = 0
         for slug, _, tags in self._concepts:
             for tag in tags:
                 tier = classify_tag_tier(
@@ -167,18 +180,51 @@ class CandidateChecker:
                     concept_slug=slug,
                 )
                 if tier == "Tier A":
-                    tier_a_count += 1
+                    fixed_count += 1
                 elif tier == "Tier B":
-                    tier_b_count += 1
+                    free_count += 1
 
-        syn_groups_count = len(self._synonym_index.groups) if self._synonym_index else 0
+        total_syn_groups = len(self._manual_groups) + len(self._generated_groups)
         return {
             "scanned_concept_files": len(self._concepts),
             "scanned_concept_tags_total": total_tags,
-            "scanned_synonym_groups": syn_groups_count,
-            "scanned_tier_a_tags": tier_a_count,
-            "scanned_tier_b_tags": tier_b_count,
+            "scanned_synonym_groups": total_syn_groups,
+            "scanned_synonym_groups_manual": len(self._manual_groups),
+            "scanned_synonym_groups_generated": len(self._generated_groups),
+            "scanned_fixed_vocabulary_tags": fixed_count,
+            "scanned_free_tags": free_count,
         }
+
+    def _classify_tag_provenance(self, tag: str, concept_slug: str) -> str:
+        norm = tag.strip().casefold()
+        if concept_slug and norm == concept_slug.strip().casefold():
+            return "concept_slug"
+        if self._tier_a_tags:
+            tier_a_cf = {x.strip().casefold() for x in self._tier_a_tags if isinstance(x, str)}
+            if norm in tier_a_cf:
+                return "tier_a_tags"
+        if self._manual_groups:
+            manual_cf = {
+                x.strip().casefold()
+                for grp in self._manual_groups
+                for x in grp
+                if isinstance(x, str)
+            }
+            if norm in manual_cf:
+                return "manual_group"
+        return "free"
+
+    def _resolve_generated_owner(self, group: list[str]) -> str | None:
+        for term in group:
+            norm = term.strip().replace("-", " ").casefold()
+            if norm in self._concept_slug_by_norm:
+                return self._concept_slug_by_norm[norm]
+            folded = term.strip().casefold()
+            if folded in self._concept_slug_by_norm:
+                return self._concept_slug_by_norm[folded]
+        if group:
+            return group[0].strip().replace(" ", "-").lower()
+        return None
 
     def check_candidate(
         self,
@@ -187,109 +233,79 @@ class CandidateChecker:
         established_or_niche: str | None = None,
         verbatim_check: dict[str, Any] | None = None,
     ) -> CandidateCheckItem:
-        """Check a single candidate slug for hard and soft collisions."""
-        hard_collisions: list[HardCollision] = []
-        tag_collisions: list[TagCollision] = []
-
+        """Check a single candidate slug and return its relations and evidence."""
+        relations = CandidateRelations()
         norm_slug = slug.strip().casefold()
         norm_slug_spaced = norm_slug.replace("-", " ")
 
-        # 1. Filename collision
+        # 1. Name occupied
         candidate_file = self.concepts_dir / f"{slug}.md"
         if candidate_file.exists():
-            hard_collisions.append(
-                HardCollision(
-                    collision_type="filename",
-                    matched_term=slug,
-                    target_file=str(candidate_file.relative_to(self.wiki_root)),
-                )
-            )
+            relations.name_occupied = {
+                "matched_name": slug,
+                "file": str(candidate_file.relative_to(self.wiki_root)),
+            }
         else:
-            # Check against stems
             for c_slug, c_path, _ in self._concepts:
                 if c_slug.casefold() == norm_slug:
-                    hard_collisions.append(
-                        HardCollision(
-                            collision_type="filename",
-                            matched_term=c_slug,
-                            target_file=str(c_path.relative_to(self.wiki_root)),
-                        )
-                    )
+                    relations.name_occupied = {
+                        "matched_name": c_slug,
+                        "file": str(c_path.relative_to(self.wiki_root)),
+                    }
                     break
 
-        # 2. Synonym collision
-        if norm_slug_spaced in self._all_synonym_terms or norm_slug in self._all_synonym_terms:
-            hard_collisions.append(
-                HardCollision(
-                    collision_type="synonym",
-                    matched_term=slug,
-                    target_file="synonyms.json",
-                )
-            )
+        # 2. Synonym relations
+        # 2a. manual groups
+        for group in self._manual_groups:
+            for term in group:
+                t_norm = term.strip().casefold()
+                t_spaced = t_norm.replace("-", " ")
+                if t_norm == norm_slug or t_spaced == norm_slug_spaced:
+                    relations.synonyms.append({
+                        "kind": "manual",
+                        "matched_term": term,
+                        "group": list(group),
+                        "owner": None,
+                    })
+                    break
 
-        # 3. Tag collisions
+        # 2b. generated groups
+        for group in self._generated_groups:
+            for term in group:
+                t_norm = term.strip().casefold()
+                t_spaced = t_norm.replace("-", " ")
+                if t_norm == norm_slug or t_spaced == norm_slug_spaced:
+                    owner = self._resolve_generated_owner(group)
+                    relations.synonyms.append({
+                        "kind": "generated",
+                        "matched_term": term,
+                        "group": list(group),
+                        "owner": owner,
+                    })
+                    break
+
+        # 3. Tag relations
         for c_slug, c_path, tags in self._concepts:
             for tag in tags:
                 tag_str = str(tag).strip()
                 tag_norm = tag_str.casefold()
                 tag_spaced = tag_norm.replace("-", " ")
+                if tag_norm in DEFAULT_EXCLUDE_TAGS:
+                    continue
                 if tag_norm == norm_slug or tag_spaced == norm_slug_spaced:
-                    tier = classify_tag_tier(
-                        tag_str,
-                        manual_groups=self._manual_groups,
-                        tier_a_list=self._tier_a_tags,
-                        concept_slug=c_slug,
-                    )
-                    if tier == "Tier A":
-                        tag_collisions.append(
-                            TagCollision(
-                                colliding_tag=tag_str,
-                                existing_concept_slug=c_slug,
-                                existing_concept_file=str(
-                                    c_path.relative_to(self.wiki_root)
-                                ),
-                                tier="Tier A",
-                                severity="warning",
-                                message=(
-                                    f"Collides with Tier A tag on '{c_slug}' "
-                                    "(controlled vocabulary; resolve post-batch)"
-                                ),
-                            )
-                        )
-                    elif tier == "Tier B":
-                        tag_collisions.append(
-                            TagCollision(
-                                colliding_tag=tag_str,
-                                existing_concept_slug=c_slug,
-                                existing_concept_file=str(
-                                    c_path.relative_to(self.wiki_root)
-                                ),
-                                tier="Tier B",
-                                severity="note",
-                                message=(
-                                    f"Collides with Tier B tag on '{c_slug}' "
-                                    "(free descriptive tag; resolve post-batch)"
-                                ),
-                            )
-                        )
-
-        # Determine overall status
-        if hard_collisions:
-            status = "hard_collision"
-        elif tag_collisions or (
-            verbatim_check is not None and not verbatim_check.get("verbatim_found", True)
-        ):
-            status = "pass_with_warnings"
-        else:
-            status = "pass"
+                    provenance = self._classify_tag_provenance(tag_str, c_slug)
+                    relations.tag_on.append({
+                        "tag": tag_str,
+                        "concept": c_slug,
+                        "file": str(c_path.relative_to(self.wiki_root)),
+                        "provenance": provenance,
+                    })
 
         return CandidateCheckItem(
             slug=slug,
             established_or_niche=established_or_niche,
-            hard_collisions=hard_collisions,
-            tag_collisions=tag_collisions,
+            relations=relations,
             verbatim_check=verbatim_check,
-            status=status,
         )
 
     def check_candidates(
@@ -303,29 +319,32 @@ class CandidateChecker:
         scan_completeness = self.scan_completeness()
 
         items: list[CandidateCheckItem] = []
-        hard_count = 0
-        tier_a_count = 0
-        tier_b_count = 0
+        name_occupied_count = 0
+        synonym_manual_count = 0
+        synonym_generated_count = 0
+        tag_relation_count = 0
         verbatim_miss_count = 0
 
         for slug in candidate_slugs:
             item = self.check_candidate(slug)
             items.append(item)
-            if item.hard_collisions:
-                hard_count += len(item.hard_collisions)
-            for tc in item.tag_collisions:
-                if tc.tier == "Tier A":
-                    tier_a_count += 1
-                elif tc.tier == "Tier B":
-                    tier_b_count += 1
+            if item.relations.name_occupied is not None:
+                name_occupied_count += 1
+            for syn in item.relations.synonyms:
+                if syn.get("kind") == "manual":
+                    synonym_manual_count += 1
+                elif syn.get("kind") == "generated":
+                    synonym_generated_count += 1
+            tag_relation_count += len(item.relations.tag_on)
             if item.verbatim_check and not item.verbatim_check.get("verbatim_found", True):
                 verbatim_miss_count += 1
 
         summary = {
             "total_candidates": len(items),
-            "hard_collision_count": hard_count,
-            "tier_a_warning_count": tier_a_count,
-            "tier_b_note_count": tier_b_count,
+            "name_occupied_count": name_occupied_count,
+            "synonym_manual_count": synonym_manual_count,
+            "synonym_generated_count": synonym_generated_count,
+            "tag_relation_count": tag_relation_count,
             "verbatim_miss_count": verbatim_miss_count,
         }
 
@@ -349,9 +368,10 @@ class CandidateChecker:
                 candidates=[],
                 summary={
                     "total_candidates": 0,
-                    "hard_collision_count": 0,
-                    "tier_a_warning_count": 0,
-                    "tier_b_note_count": 0,
+                    "name_occupied_count": 0,
+                    "synonym_manual_count": 0,
+                    "synonym_generated_count": 0,
+                    "tag_relation_count": 0,
                     "verbatim_miss_count": 0,
                 },
             )
@@ -363,9 +383,10 @@ class CandidateChecker:
         scan_completeness = self.scan_completeness()
 
         items: list[CandidateCheckItem] = []
-        hard_count = 0
-        tier_a_count = 0
-        tier_b_count = 0
+        name_occupied_count = 0
+        synonym_manual_count = 0
+        synonym_generated_count = 0
+        tag_relation_count = 0
         verbatim_miss_count = 0
 
         for cand in parsed:
@@ -380,21 +401,23 @@ class CandidateChecker:
                 verbatim_check=v_check,
             )
             items.append(item)
-            if item.hard_collisions:
-                hard_count += len(item.hard_collisions)
-            for tc in item.tag_collisions:
-                if tc.tier == "Tier A":
-                    tier_a_count += 1
-                elif tc.tier == "Tier B":
-                    tier_b_count += 1
+            if item.relations.name_occupied is not None:
+                name_occupied_count += 1
+            for syn in item.relations.synonyms:
+                if syn.get("kind") == "manual":
+                    synonym_manual_count += 1
+                elif syn.get("kind") == "generated":
+                    synonym_generated_count += 1
+            tag_relation_count += len(item.relations.tag_on)
             if item.verbatim_check and not item.verbatim_check.get("verbatim_found", True):
                 verbatim_miss_count += 1
 
         summary = {
             "total_candidates": len(items),
-            "hard_collision_count": hard_count,
-            "tier_a_warning_count": tier_a_count,
-            "tier_b_note_count": tier_b_count,
+            "name_occupied_count": name_occupied_count,
+            "synonym_manual_count": synonym_manual_count,
+            "synonym_generated_count": synonym_generated_count,
+            "tag_relation_count": tag_relation_count,
             "verbatim_miss_count": verbatim_miss_count,
         }
 

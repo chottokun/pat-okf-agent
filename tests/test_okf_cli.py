@@ -32,8 +32,11 @@ class CliTests(unittest.TestCase):
 
     def run_cli(self, *args):
         out, err = StringIO(), StringIO()
-        with redirect_stdout(out), redirect_stderr(err):
-            code = main([str(arg) for arg in args])
+        try:
+            with redirect_stdout(out), redirect_stderr(err):
+                code = main([str(arg) for arg in args])
+        except SystemExit as exc:
+            code = exc.code
         return code, out.getvalue(), err.getvalue()
 
     def test_version_flag_uses_package_version(self):
@@ -777,9 +780,11 @@ class CliTests(unittest.TestCase):
         code, out, _ = self.run_cli("candidate-check", self.root, "dielectric-fluid", "--json")
         self.assertEqual(code, 0)
         data = json.loads(out)
+        self.assertEqual(data["version"], "0.2")
         self.assertEqual(data["summary"]["total_candidates"], 1)
-        self.assertEqual(data["summary"]["tier_b_note_count"], 1)
+        self.assertEqual(data["summary"]["tag_relation_count"], 1)
         self.assertEqual(data["candidates"][0]["slug"], "dielectric-fluid")
+        self.assertEqual(len(data["candidates"][0]["relations"]["tag_on"]), 1)
 
     def test_cli_candidate_check_human_output(self):
         write(
@@ -795,10 +800,14 @@ class CliTests(unittest.TestCase):
         code, out, _ = self.run_cli("candidate-check", self.root, "dielectric-fluid")
         self.assertEqual(code, 0)
         self.assertIn("Candidate Check Report", out)
-        self.assertIn("NOTE: Tier B Tag Collision", out)
-        self.assertIn("PR #12 policy", out)
+        self.assertIn("tag_on:", out)
+        self.assertNotIn("NOTE: Tier B Tag Collision", out)
+        self.assertNotIn("[WARNING", out)
+        self.assertNotIn("PR #12 policy", out)
+        self.assertIn("--fail-on", out)
 
-    def test_cli_candidate_check_strict_flag(self):
+    def test_cli_candidate_check_fail_on(self):
+        """Test default exit 0, --fail-on filename / synonym triggers, and invalid choice exit 2."""
         write(
             self.root,
             "concepts/interposer.md",
@@ -807,15 +816,50 @@ class CliTests(unittest.TestCase):
         write(
             self.root,
             "synonyms.json",
-            json.dumps({"groups": [], "generated_groups": [], "manual_groups": []}),
+            json.dumps({
+                "groups": [["tim", "thermal-interface-materials"]],
+                "generated_groups": [],
+                "manual_groups": [["tim", "thermal-interface-materials"]],
+            }),
         )
-        # Without --strict: exit 0 (evidence report)
+        # 1. Filename occupied: default exit 0
         code0, _, _ = self.run_cli("candidate-check", self.root, "interposer")
         self.assertEqual(code0, 0)
 
-        # With --strict: exit 1 on hard collision
-        code1, _, _ = self.run_cli("candidate-check", self.root, "interposer", "--strict")
+        # 2. --fail-on filename triggers exit 1
+        code1, _, _ = self.run_cli(
+            "candidate-check", self.root, "interposer", "--fail-on", "filename"
+        )
         self.assertEqual(code1, 1)
+
+        # 3. --fail-on synonym does not trigger for interposer (exit 0)
+        code2, _, _ = self.run_cli(
+            "candidate-check", self.root, "interposer", "--fail-on", "synonym"
+        )
+        self.assertEqual(code2, 0)
+
+        # 4. --fail-on synonym triggers exit 1 for tim
+        code3, _, _ = self.run_cli(
+            "candidate-check", self.root, "tim", "--fail-on", "synonym"
+        )
+        self.assertEqual(code3, 1)
+
+        # 4b. --fail-on synonym-manual triggers exit 1 for tim, synonym-generated does not
+        code3b, _, _ = self.run_cli(
+            "candidate-check", self.root, "tim", "--fail-on", "synonym-manual"
+        )
+        self.assertEqual(code3b, 1)
+        code3c, _, _ = self.run_cli(
+            "candidate-check", self.root, "tim", "--fail-on", "synonym-generated"
+        )
+        self.assertEqual(code3c, 0)
+
+        # 5. Invalid choice triggers exit 2
+        code4, _, err4 = self.run_cli(
+            "candidate-check", self.root, "interposer", "--fail-on", "invalid-kind"
+        )
+        self.assertEqual(code4, 2)
+        self.assertIn("invalid choice", err4)
 
     def test_cli_candidate_check_missing_inputs(self):
         self.root.mkdir(parents=True, exist_ok=True)
