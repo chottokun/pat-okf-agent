@@ -763,6 +763,74 @@ class CliTests(unittest.TestCase):
             [["AlN", "aluminum-nitride", "窒化アルミニウム"]],
         )
 
+    def test_cli_candidate_check_json(self):
+        write(
+            self.root,
+            "concepts/spray-cooling.md",
+            node("type: Concept\ntitle: 'Spray Cooling'\ntags: [spray-cooling, dielectric-fluid]\n"),
+        )
+        write(
+            self.root,
+            "synonyms.json",
+            json.dumps({"groups": [], "generated_groups": [], "manual_groups": []}),
+        )
+        code, out, _ = self.run_cli("candidate-check", self.root, "dielectric-fluid", "--json")
+        self.assertEqual(code, 0)
+        data = json.loads(out)
+        self.assertEqual(data["summary"]["total_candidates"], 1)
+        self.assertEqual(data["summary"]["tier_b_note_count"], 1)
+        self.assertEqual(data["candidates"][0]["slug"], "dielectric-fluid")
+
+    def test_cli_candidate_check_human_output(self):
+        write(
+            self.root,
+            "concepts/spray-cooling.md",
+            node("type: Concept\ntitle: 'Spray Cooling'\ntags: [spray-cooling, dielectric-fluid]\n"),
+        )
+        write(
+            self.root,
+            "synonyms.json",
+            json.dumps({"groups": [], "generated_groups": [], "manual_groups": []}),
+        )
+        code, out, _ = self.run_cli("candidate-check", self.root, "dielectric-fluid")
+        self.assertEqual(code, 0)
+        self.assertIn("Candidate Check Report", out)
+        self.assertIn("NOTE: Tier B Tag Collision", out)
+        self.assertIn("PR #12 policy", out)
+
+    def test_cli_candidate_check_strict_flag(self):
+        write(
+            self.root,
+            "concepts/interposer.md",
+            node("type: Concept\ntitle: 'Interposer'\ntags: [interposer]\n"),
+        )
+        write(
+            self.root,
+            "synonyms.json",
+            json.dumps({"groups": [], "generated_groups": [], "manual_groups": []}),
+        )
+        # Without --strict: exit 0 (evidence report)
+        code0, _, _ = self.run_cli("candidate-check", self.root, "interposer")
+        self.assertEqual(code0, 0)
+
+        # With --strict: exit 1 on hard collision
+        code1, _, _ = self.run_cli("candidate-check", self.root, "interposer", "--strict")
+        self.assertEqual(code1, 1)
+
+    def test_cli_candidate_check_missing_inputs(self):
+        self.root.mkdir(parents=True, exist_ok=True)
+        # 1. Missing proposal file -> exit 1
+        code1, _, err1 = self.run_cli(
+            "candidate-check", self.root, "--proposal", str(self.root / "nonexistent.md")
+        )
+        self.assertEqual(code1, 1)
+        self.assertIn("error: proposal file not found", err1)
+
+        # 2. Neither candidates nor proposal -> exit 2
+        code2, _, err2 = self.run_cli("candidate-check", self.root)
+        self.assertEqual(code2, 2)
+        self.assertIn("error: candidate slugs or --proposal required", err2)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .. import __version__
 from ..epo import EpoError
+from .candidate import CandidateChecker
 from .context import ContextResolver
 from .evolution import (
     analyse_flows,
@@ -281,6 +282,33 @@ def _parser() -> argparse.ArgumentParser:
         help="record orphan / rejection reason into snapshot metadata without re-fetching",
     )
     p_verify.add_argument("--json", action="store_true", help="output JSON result")
+
+    p_cand = sub.add_parser(
+        "candidate-check",
+        help="check candidate concepts for duplicates and evidence",
+    )
+    p_cand.add_argument("dir", help="wiki root directory")
+    p_cand.add_argument(
+        "candidates",
+        nargs="*",
+        default=[],
+        help="candidate slug(s) to check directly",
+    )
+    p_cand.add_argument(
+        "--proposal",
+        default=None,
+        help="path to candidate proposal markdown file",
+    )
+    p_cand.add_argument(
+        "--json",
+        action="store_true",
+        help="output JSON result",
+    )
+    p_cand.add_argument(
+        "--strict",
+        action="store_true",
+        help="exit 1 if any candidate has hard collision",
+    )
 
     return parser
 
@@ -720,6 +748,110 @@ def _dispatch(args: argparse.Namespace) -> int:
             if res.error:
                 print(f"error: {res.error}")
         return 0 if res.ok else 1
+
+    if args.command == "candidate-check":
+        wiki = Path(args.dir)
+        if not wiki.exists():
+            print(f"error: wiki root directory not found: {args.dir}", file=sys.stderr)
+            return 1
+
+        if args.proposal is not None:
+            prop_path = Path(args.proposal)
+            if not prop_path.exists():
+                print(f"error: proposal file not found: {args.proposal}", file=sys.stderr)
+                return 1
+
+        if not args.proposal and not args.candidates:
+            print("error: candidate slugs or --proposal required", file=sys.stderr)
+            return 2
+
+        checker = CandidateChecker(wiki)
+        if args.proposal:
+            result = checker.check_proposal(args.proposal)
+        else:
+            result = checker.check_candidates(args.candidates)
+
+        if args.json:
+            print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+        else:
+            sc = result.scan_completeness
+            inp = result.inputs_status
+            print("=== Candidate Check Report ===")
+            print(f"Wiki: {result.wiki_root}")
+            print(
+                f"Scanned: {sc.get('scanned_concept_files', 0)} concepts "
+                f"({sc.get('scanned_concept_tags_total', 0)} tags: "
+                f"{sc.get('scanned_tier_a_tags', 0)} Tier A, "
+                f"{sc.get('scanned_tier_b_tags', 0)} Tier B), "
+                f"{sc.get('scanned_synonym_groups', 0)} synonym groups"
+            )
+            syn_st = "present" if inp.get("synonyms_json_present") else "missing"
+            sv_st = "present" if inp.get("source_verify_cache_present") else "missing"
+            print(f"Inputs: synonyms.json={syn_st}, source_verify={sv_st}")
+            print()
+            print("Candidates:")
+            for i, cand in enumerate(result.candidates, start=1):
+                role_label = (
+                    f" [{cand.established_or_niche}]"
+                    if cand.established_or_niche
+                    else ""
+                )
+                print(f"  {i}. **{cand.slug}**{role_label} -> status: {cand.status}")
+                if cand.hard_collisions:
+                    for hc in cand.hard_collisions:
+                        print(
+                            f"     - [HARD REJECTION] {hc.collision_type} collision "
+                            f"with '{hc.matched_term}' in {hc.target_file}"
+                        )
+                else:
+                    print("     - Hard collisions: none")
+
+                if cand.tag_collisions:
+                    for tc in cand.tag_collisions:
+                        badge = (
+                            "[WARNING: Tier A Tag Collision]"
+                            if tc.tier == "Tier A"
+                            else "[NOTE: Tier B Tag Collision]"
+                        )
+                        print(
+                            f"     - {badge} tag '{tc.colliding_tag}' on "
+                            f"{tc.existing_concept_file} ({tc.message})"
+                        )
+                else:
+                    print("     - Tag collisions: none")
+
+                if cand.verbatim_check:
+                    vc = cand.verbatim_check
+                    if not vc.get("claimed_emergence", True):
+                        print("     - Verbatim: [SKIP: Taxonomy Gap] (no emergence claimed)")
+                    elif vc.get("verbatim_found"):
+                        print(
+                            f"     - Verbatim: [PASS: Verbatim Matched] "
+                            f"({vc.get('match_count')} hits in {vc.get('cited_target')}) {vc.get('snippet')}"
+                        )
+                    else:
+                        print(
+                            f"     - Verbatim: [FAIL: Verbatim Miss] "
+                            f"(term '{vc.get('quoted_term')}' in {vc.get('cited_target')}: {vc.get('snippet')})"
+                        )
+                print()
+
+            sm = result.summary
+            print(
+                f"Summary: {sm.get('total_candidates', 0)} candidates "
+                f"({sm.get('hard_collision_count', 0)} hard collisions, "
+                f"{sm.get('tier_a_warning_count', 0)} Tier A warnings, "
+                f"{sm.get('tier_b_note_count', 0)} Tier B notes, "
+                f"{sm.get('verbatim_miss_count', 0)} verbatim misses)"
+            )
+            print(
+                "* Tag collisions are recorded as warnings per PR #12 policy. "
+                "Do not reject candidate solely due to tag collision; document in Tag collisions: field."
+            )
+
+        if args.strict and result.summary.get("hard_collision_count", 0) > 0:
+            return 1
+        return 0
 
     return 2
 

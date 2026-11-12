@@ -18,15 +18,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-from .model import Concept, iter_concepts
+from .model import Concept, iter_concepts, load_concept
 from .search import SearchHit, pattern_for
 
 __all__ = [
     "DEFAULT_EXCLUDE_TAGS",
     "ExpandedSearchBackend",
     "SynonymIndex",
+    "classify_tag_tier",
     "evaluate_synonyms",
     "extract_concept_synonym_groups",
+    "inventory_wiki_tags",
     "load_eval_queries",
     "pattern_reason",
     "plan_synonyms_sync",
@@ -479,6 +481,30 @@ def _load_existing_manual_groups(synonyms_path: Path) -> list[list[str]]:
     raise ValueError("synonyms must be a list of alias groups or a sync object")
 
 
+def _load_existing_tier_a_tags(synonyms_path: Path) -> list[str] | None:
+    if not synonyms_path.exists():
+        return None
+    try:
+        data = json.loads(synonyms_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if isinstance(data, dict) and "tier_a_tags" in data:
+        raw = data.get("tier_a_tags", [])
+        if isinstance(raw, list):
+            result: list[str] = []
+            seen: set[str] = set()
+            for item in raw:
+                if isinstance(item, str) and item.strip():
+                    term = item.strip()
+                    cf = term.casefold()
+                    if cf not in seen:
+                        seen.add(cf)
+                        result.append(term)
+            return result
+        return []
+    return None
+
+
 def _merge_manual_and_generated_groups(
     manual_groups: list[list[str]],
     generated_groups: list[list[str]],
@@ -535,6 +561,7 @@ def plan_synonyms_sync(
         else root_path / "synonyms.json"
     )
     manual_groups = _load_existing_manual_groups(target)
+    tier_a_tags = _load_existing_tier_a_tags(target)
     generated_groups = extract_concept_synonym_groups(
         root_path, exclude_tags=exclude_tags
     )
@@ -546,6 +573,8 @@ def plan_synonyms_sync(
         "generated_groups": generated_groups,
         "manual_groups": manual_groups,
     }
+    if tier_a_tags is not None:
+        payload["tier_a_tags"] = tier_a_tags
     if groups:
         SynonymIndex.from_data(payload, path=str(target))
     content = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
@@ -593,4 +622,112 @@ def sync_synonyms(
         "group_count": len(payload["groups"]),
         "generated_count": len(payload["generated_groups"]),
         "manual_count": len(payload["manual_groups"]),
+    }
+
+
+def classify_tag_tier(
+    tag: str,
+    *,
+    manual_groups: Iterable[Iterable[str]] | None = None,
+    tier_a_list: Iterable[str] | None = None,
+    concept_slug: str | None = None,
+    exclude_tags: Iterable[str] | None = None,
+) -> str | None:
+    """Classify a tag into None (Tier 外 / excluded), 'Tier A', or 'Tier B'."""
+    norm = tag.strip().casefold()
+    excludes = frozenset(
+        x.casefold() for x in (exclude_tags if exclude_tags is not None else DEFAULT_EXCLUDE_TAGS)
+    )
+    if norm in excludes:
+        return None
+    if concept_slug is not None and norm == concept_slug.strip().casefold():
+        return "Tier A"
+    if tier_a_list is not None:
+        tier_a_cf = {x.strip().casefold() for x in tier_a_list if isinstance(x, str)}
+        if norm in tier_a_cf:
+            return "Tier A"
+    if manual_groups is not None:
+        manual_cf = {
+            x.strip().casefold()
+            for grp in manual_groups
+            for x in grp
+            if isinstance(x, str)
+        }
+        if norm in manual_cf:
+            return "Tier A"
+    return "Tier B"
+
+
+def inventory_wiki_tags(
+    root: str | Path,
+    *,
+    exclude_tags: Iterable[str] | None = None,
+    synonyms_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Inventory and classify all concept tags across the wiki."""
+    root_path = Path(root)
+    concepts_dir = root_path / "concepts"
+    target_syn = (
+        Path(synonyms_path)
+        if synonyms_path is not None
+        else root_path / "synonyms.json"
+    )
+    manual_groups = _load_existing_manual_groups(target_syn) if target_syn.exists() else []
+    tier_a_tags = _load_existing_tier_a_tags(target_syn) if target_syn.exists() else []
+    if tier_a_tags is None:
+        tier_a_tags = []
+
+    concept_files = sorted(
+        p for p in concepts_dir.glob("*.md")
+        if p.name != "index.md" and p.is_file()
+    ) if concepts_dir.exists() else []
+
+    tag_frequencies: dict[str, int] = defaultdict(int)
+    tags_by_tier: dict[str, set[str]] = {
+        "Tier A": set(),
+        "Tier B": set(),
+        "Tier 外": set(),
+    }
+    total_tags = 0
+
+    for path in concept_files:
+        slug = path.stem
+        try:
+            concept = load_concept(path, root_path)
+            tags = concept.tags
+        except Exception:
+            continue
+        for raw_tag in tags:
+            tag = str(raw_tag).strip()
+            if not tag:
+                continue
+            total_tags += 1
+            tag_frequencies[tag] += 1
+            tier = classify_tag_tier(
+                tag,
+                manual_groups=manual_groups,
+                tier_a_list=tier_a_tags,
+                concept_slug=slug,
+                exclude_tags=exclude_tags,
+            )
+            if tier is None:
+                tags_by_tier["Tier 外"].add(tag)
+            else:
+                tags_by_tier[tier].add(tag)
+
+    return {
+        "total_concepts": len(concept_files),
+        "total_tags": total_tags,
+        "unique_tags": len(tag_frequencies),
+        "tag_frequencies": dict(tag_frequencies),
+        "tier_counts": {
+            "Tier A": len(tags_by_tier["Tier A"]),
+            "Tier B": len(tags_by_tier["Tier B"]),
+            "Tier 外": len(tags_by_tier["Tier 外"]),
+        },
+        "tags_by_tier": {
+            "Tier A": sorted(tags_by_tier["Tier A"]),
+            "Tier B": sorted(tags_by_tier["Tier B"]),
+            "Tier 外": sorted(tags_by_tier["Tier 外"]),
+        },
     }
