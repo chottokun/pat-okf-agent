@@ -27,6 +27,7 @@ This skill governs **candidate selection, batch orchestration, progress accounti
 - Note structure, frontmatter, `[P1]`–`[P8]` provenance rules, and indexing → `.agents/skills/okf-wiki/SKILL.md`
 - Single-publication / CQL EPO ingestion → `.agents/skills/patent-to-wiki/SKILL.md`
 - DOI, arXiv, and web snapshot verification + `--orphan-reason` → `.agents/skills/source-verify/SKILL.md`
+- Settled design conventions (value domains, freshness, evidence layout, tag tiers, version grounding, cross-KB references, gate invocation forms) → `.agents/skills/okf-design-conventions/SKILL.md` — read at batch start.
 
 ## Candidate Selection & Proposal (Phase 1 / New-Concept Batches)
 
@@ -66,7 +67,7 @@ Every batch run must establish an isolated, resumable workspace before making an
    - For graph-expanding patent discovery batches (Phase 1) that may pull noisy candidates, initialize a staging wiki at `.kb-<project>-work/<phase>-<batch>/wiki/` and merge into the live KB only after pruning and verification.
    - For bounded enrichment batches on existing concepts (Phases 2–3), operate on the target concept files in the live KB after taking a milestone folder backup.
 2. **Prompt & Launch Log**: Save the exact worker instructions to `<work-dir>/prompt.md` (carrying forward lessons from the prior batch's Reflection). Capture worker stdout/stderr to `<work-dir>/run.log` and append an explicit `EXIT:<code>` footer when the process terminates so silent crashes or quota kills are never mistaken for clean completions.
-3. **Preflight Reflection, Learned-Rule & Candidate Rationale Record**: At batch start (before running queries or editing concepts), the worker must read the `## Reflection` sections of previous batch `report.md` files under `.kb-<project>-work/*/` (at minimum the most recent completed batch, if any exist) and the `<!-- LEARNED -->` block at the tail of `<wiki>/.agents/AGENTS.md` (if present). In the `## Preflight` section of `<work-dir>/report.md`, record:
+3. **Preflight Reflection, Learned-Rule & Candidate Rationale Record**: At batch start (before running queries or editing concepts), the worker must read the `## Reflection` sections of previous batch `report.md` files under `.kb-<project>-work/*/` (at minimum the most recent completed batch, if any exist), the `<!-- LEARNED -->` block at the tail of `<wiki>/.agents/AGENTS.md` (if present), and `.agents/skills/okf-design-conventions/SKILL.md`. In the `## Preflight` section of `<work-dir>/report.md`, record:
    - One line per prior report read: `Prior Reflection consulted: <path>` (or `none (first batch)`), plus the carry-forward rules applied.
    - For new-concept batches, a `### Candidate Selection Rationale` block recording the approved candidates, their `(a)`–`(e)` selection basis, and the deferred runner-ups from the $2N$ proposal pool (for enrichment-only batches on existing concepts, record `Target selection: existing concepts assigned for enrichment (<reason>)`):
      ````markdown
