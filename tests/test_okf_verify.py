@@ -828,6 +828,70 @@ class TestArxivVerification(unittest.TestCase):
         xml_cache = list(self.cache_dir.glob("**/*.xml"))
         self.assertEqual(len(xml_cache), 0)
 
+    def test_arxiv_fresh_fetch_writes_sidecar(self) -> None:
+        transport = FakeTransport([
+            ("export.arxiv.org/api/query", FakeResponse(ARXIV_SAMPLE_XML)),
+        ])
+        verifier = self._make_verifier(transport)
+        res = verifier.verify("arXiv:2401.12345")
+        self.assertTrue(res.ok)
+
+        xml_path = self.cache_dir / "arxiv" / "2401.12345.xml"
+        meta_path = self.cache_dir / "arxiv" / "2401.12345.meta.json"
+        self.assertTrue(xml_path.is_file())
+        self.assertTrue(meta_path.is_file())
+
+        meta_data = json.loads(meta_path.read_text(encoding="utf-8"))
+        expected_sha = f"sha256:{hashlib.sha256(xml_path.read_bytes()).hexdigest()}"
+        self.assertEqual(meta_data["identifier"], "arXiv:2401.12345")
+        self.assertEqual(meta_data["identifier_type"], "arxiv")
+        self.assertEqual(meta_data["kind"], "preprint")
+        self.assertEqual(
+            meta_data["url"],
+            "https://export.arxiv.org/api/query?id_list=2401.12345",
+        )
+        self.assertEqual(meta_data["via"], "arxiv")
+        self.assertEqual(meta_data["retrieved_at"], res.retrieved_at)
+        self.assertEqual(meta_data["sha256"], expected_sha)
+        self.assertEqual(
+            meta_data["title"], "High Thermal Conductivity of AlN Sintered Ceramics"
+        )
+        self.assertEqual(meta_data["issued"], "2024-01-15")
+        self.assertEqual(res.evidence.sha256, expected_sha)
+
+    def test_arxiv_cache_hit_populates_missing_sidecar(self) -> None:
+        arxiv_dir = self.cache_dir / "arxiv"
+        arxiv_dir.mkdir(parents=True, exist_ok=True)
+        xml_path = arxiv_dir / "2401.12345.xml"
+        xml_path.write_text(ARXIV_SAMPLE_XML, encoding="utf-8")
+        meta_path = arxiv_dir / "2401.12345.meta.json"
+        self.assertFalse(meta_path.exists())
+
+        transport = FakeTransport([])
+        verifier = self._make_verifier(transport)
+        res = verifier.verify("arXiv:2401.12345")
+        self.assertTrue(res.ok)
+        self.assertTrue(res.evidence.cached)
+        self.assertEqual(len(transport.requests), 0)
+
+        self.assertTrue(meta_path.is_file())
+        meta_data = json.loads(meta_path.read_text(encoding="utf-8"))
+        expected_sha = f"sha256:{hashlib.sha256(xml_path.read_bytes()).hexdigest()}"
+        self.assertEqual(meta_data["identifier"], "arXiv:2401.12345")
+        self.assertEqual(meta_data["identifier_type"], "arxiv")
+        self.assertEqual(meta_data["kind"], "preprint")
+        self.assertEqual(
+            meta_data["url"],
+            "https://export.arxiv.org/api/query?id_list=2401.12345",
+        )
+        self.assertEqual(meta_data["via"], "arxiv")
+        self.assertEqual(meta_data["retrieved_at"], res.retrieved_at)
+        self.assertEqual(meta_data["sha256"], expected_sha)
+        self.assertEqual(
+            meta_data["title"], "High Thermal Conductivity of AlN Sintered Ceramics"
+        )
+        self.assertEqual(meta_data["issued"], "2024-01-15")
+
 
 HTML_SAMPLE = """<!DOCTYPE html>
 <html>

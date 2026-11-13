@@ -564,6 +564,7 @@ class TestEvidenceValidation(unittest.TestCase):
         self.evidence_dir = Path(self.tmp.name) / "evidence"
         self.snapshots_dir = self.evidence_dir / "snapshots"
         self.snapshots_dir.mkdir(parents=True)
+        self.arxiv_dir = self.evidence_dir / "arxiv"
 
         write(self.root, "index.md", "# Index\n")
 
@@ -627,6 +628,52 @@ class TestEvidenceValidation(unittest.TestCase):
             meta_data.update(meta_extra)
         meta_path.write_text(json.dumps(meta_data, indent=2), encoding="utf-8")
         return key, meta_path, body_path
+
+    def _create_arxiv_evidence(
+        self,
+        bare_id: str,
+        *,
+        body: bytes | None = b"<feed>arxiv sample</feed>",
+        sha256: str | None = None,
+        meta_extra: dict | None = None,
+        with_meta: bool = True,
+        ext: str = "xml",
+    ) -> tuple[str, Path | None, Path | None]:
+        import hashlib
+        import json
+        from pat_okf_agent.epo import _safe_name
+
+        stem = _safe_name(bare_id)
+        self.arxiv_dir.mkdir(parents=True, exist_ok=True)
+        body_path = None
+        if body is not None:
+            body_path = self.arxiv_dir / f"{stem}.{ext}"
+            body_path.write_bytes(body)
+
+        meta_path = None
+        if with_meta:
+            meta_path = self.arxiv_dir / f"{stem}.meta.json"
+            if sha256 is None and body is not None:
+                digest = hashlib.sha256(body).hexdigest()
+                sha256 = f"sha256:{digest}"
+
+            meta_data: dict[str, Any] = {
+                "identifier": f"arXiv:{bare_id}",
+                "identifier_type": "arxiv",
+                "kind": "preprint",
+                "url": f"https://export.arxiv.org/api/query?id_list={bare_id}",
+                "via": "arxiv",
+                "retrieved_at": "2026-11-13",
+                "title": "Sample arXiv Paper",
+                "issued": "2024-01-15",
+            }
+            if sha256 is not None:
+                meta_data["sha256"] = sha256
+            if meta_extra:
+                meta_data.update(meta_extra)
+            meta_path.write_text(json.dumps(meta_data, indent=2), encoding="utf-8")
+
+        return stem, meta_path, body_path
 
     def test_default_check_evidence_is_false_and_backward_compatible(self):
         write(self.root, "concepts/aln.md", node(
@@ -715,6 +762,7 @@ class TestEvidenceValidation(unittest.TestCase):
         ))
         report = validate_wiki(
             self.root,
+            check_orphans=False,
             check_evidence=True,
             evidence_dir=self.evidence_dir,
             strict_provenance=True,
@@ -740,6 +788,7 @@ class TestEvidenceValidation(unittest.TestCase):
         ))
         report = validate_wiki(
             self.root,
+            check_orphans=False,
             check_evidence=True,
             evidence_dir=self.evidence_dir,
             strict_provenance=True,
@@ -754,7 +803,6 @@ class TestEvidenceValidation(unittest.TestCase):
             "basis: external\n"
             "sources:\n"
             "  - 'paper:10.1111/jace.14748 via=crossref'\n"
-            "  - 'preprint:arXiv:2401.12345 via=arxiv'\n"
             "  - 'patent-biblio:EP1234567A1 via=epo-ops'\n"
             "verified_at: '2026-11-09'\n",
             "# AlN\n",
@@ -785,6 +833,7 @@ class TestEvidenceValidation(unittest.TestCase):
 
         report = validate_wiki(
             self.root,
+            check_orphans=False,
             check_evidence=True,
             evidence_dir=self.evidence_dir,
             strict_provenance=True,
@@ -905,6 +954,7 @@ class TestEvidenceValidation(unittest.TestCase):
         ))
         report = validate_wiki(
             self.root,
+            check_orphans=False,
             check_evidence=True,
             evidence_dir=self.evidence_dir,
             strict_provenance=True,
@@ -931,6 +981,7 @@ class TestEvidenceValidation(unittest.TestCase):
         ))
         report = validate_wiki(
             self.root,
+            check_orphans=False,
             check_evidence=True,
             evidence_dir=self.evidence_dir,
             strict_provenance=True,
@@ -962,6 +1013,7 @@ class TestEvidenceValidation(unittest.TestCase):
         ))
         report = validate_wiki(
             self.root,
+            check_orphans=False,
             check_evidence=True,
             evidence_dir=self.evidence_dir,
             strict_provenance=True,
@@ -988,6 +1040,7 @@ class TestEvidenceValidation(unittest.TestCase):
         ))
         report = validate_wiki(
             self.root,
+            check_orphans=False,
             check_evidence=True,
             evidence_dir=self.evidence_dir,
             strict_provenance=True,
@@ -1007,6 +1060,7 @@ class TestEvidenceValidation(unittest.TestCase):
         ))
         report = validate_wiki(
             self.root,
+            check_orphans=False,
             check_evidence=True,
             evidence_dir=self.evidence_dir,
             strict_provenance=True,
@@ -1051,6 +1105,7 @@ class TestEvidenceValidation(unittest.TestCase):
 
         report = validate_wiki(
             self.root,
+            check_orphans=False,
             check_evidence=True,
             evidence_dir=self.evidence_dir,
             strict_provenance=True,
@@ -1061,6 +1116,177 @@ class TestEvidenceValidation(unittest.TestCase):
         self.assertEqual(e2_warnings, [])
         self.assertEqual(report.evidence.orphan_count, 1)
         self.assertEqual(report.evidence.unexplained_orphan_count, 0)
+
+    def test_arxiv_evidence_present_and_verified(self):
+        bare_id = "2401.12345"
+        self._create_arxiv_evidence(bare_id)
+
+        write(self.root, "concepts/aln.md", node(
+            "type: Concept\n"
+            "title: 'AlN'\n"
+            "basis: external\n"
+            f"sources: ['preprint:arXiv:{bare_id} via=arxiv']\n"
+            "verified_at: '2026-11-09'\n",
+            "# AlN\n",
+        ))
+        report = validate_wiki(
+            self.root,
+            check_orphans=False,
+            check_evidence=True,
+            evidence_dir=self.evidence_dir,
+            strict_provenance=True,
+        )
+        self.assertTrue(report.ok)
+        self.assertEqual(report.errors, [])
+        self.assertEqual(report.warnings, [])
+        self.assertIsNotNone(report.evidence)
+        self.assertEqual(report.evidence.referenced_count, 1)
+        self.assertEqual(report.evidence.missing_count, 0)
+        self.assertEqual(report.evidence.unverifiable_count, 0)
+
+    def test_arxiv_legacy_body_only_unverifiable_e4(self):
+        bare_id = "2401.12345"
+        _, _, body_path = self._create_arxiv_evidence(bare_id, with_meta=False)
+
+        write(self.root, "concepts/aln.md", node(
+            "type: Concept\n"
+            "title: 'AlN'\n"
+            "basis: external\n"
+            f"sources: ['preprint:arXiv:{bare_id} via=arxiv']\n"
+            "verified_at: '2026-11-09'\n",
+            "# AlN\n",
+        ))
+        # Normal triage
+        report_warn = validate_wiki(
+            self.root,
+            check_evidence=True,
+            evidence_dir=self.evidence_dir,
+            strict_provenance=False,
+        )
+        self.assertTrue(report_warn.ok)
+        self.assertEqual(len(report_warn.errors), 0)
+        self.assertEqual(report_warn.evidence.referenced_count, 1)
+        self.assertEqual(report_warn.evidence.missing_count, 0)
+        self.assertEqual(report_warn.evidence.unverifiable_count, 1)
+        self.assertTrue(any("[E4]" in w and "legacy arXiv evidence" in w for w in report_warn.warnings))
+        unverifiable_entry = report_warn.evidence.unverifiable[0]
+        self.assertEqual(unverifiable_entry["reason"], "legacy_no_metadata")
+        self.assertEqual(unverifiable_entry["key"], "2401.12345")
+        self.assertEqual(unverifiable_entry["body_path"], str(body_path))
+
+        # Strict provenance: still no error (E4 does not escalate)
+        report_strict = validate_wiki(
+            self.root,
+            check_evidence=True,
+            evidence_dir=self.evidence_dir,
+            strict_provenance=True,
+        )
+        self.assertTrue(report_strict.ok)
+        self.assertEqual(len(report_strict.errors), 0)
+        self.assertEqual(report_strict.evidence.missing_count, 0)
+        self.assertEqual(report_strict.evidence.unverifiable_count, 1)
+
+    def test_arxiv_tampered_body_sha256_mismatch(self):
+        bare_id = "2401.12345"
+        self._create_arxiv_evidence(
+            bare_id,
+            body=b"<feed>tampered content</feed>",
+            sha256="sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        )
+
+        write(self.root, "concepts/aln.md", node(
+            "type: Concept\n"
+            "title: 'AlN'\n"
+            "basis: external\n"
+            f"sources: ['preprint:arXiv:{bare_id} via=arxiv']\n"
+            "verified_at: '2026-11-09'\n",
+            "# AlN\n",
+        ))
+        report = validate_wiki(
+            self.root,
+            check_orphans=False,
+            check_evidence=True,
+            evidence_dir=self.evidence_dir,
+            strict_provenance=True,
+        )
+        self.assertFalse(report.ok)
+        self.assertTrue(any("[E1]" in e and "sha256 mismatch" in e for e in report.errors))
+        self.assertEqual(report.evidence.missing_count, 1)
+        self.assertEqual(report.evidence.missing[0]["reason"], "sha256_mismatch")
+
+    def test_arxiv_meta_only_missing_body(self):
+        bare_id = "2401.12345"
+        self._create_arxiv_evidence(bare_id, body=None)
+
+        write(self.root, "concepts/aln.md", node(
+            "type: Concept\n"
+            "title: 'AlN'\n"
+            "basis: external\n"
+            f"sources: ['preprint:arXiv:{bare_id} via=arxiv']\n"
+            "verified_at: '2026-11-09'\n",
+            "# AlN\n",
+        ))
+        report = validate_wiki(
+            self.root,
+            check_orphans=False,
+            check_evidence=True,
+            evidence_dir=self.evidence_dir,
+            strict_provenance=True,
+        )
+        self.assertFalse(report.ok)
+        self.assertTrue(any("[E1]" in e and "missing arXiv body file" in e for e in report.errors))
+        self.assertEqual(report.evidence.missing_count, 1)
+        self.assertEqual(report.evidence.missing[0]["reason"], "missing_body")
+
+    def test_arxiv_neither_file_missing_metadata(self):
+        bare_id = "2401.12345"
+
+        write(self.root, "concepts/aln.md", node(
+            "type: Concept\n"
+            "title: 'AlN'\n"
+            "basis: external\n"
+            f"sources: ['preprint:arXiv:{bare_id} via=arxiv']\n"
+            "verified_at: '2026-11-09'\n",
+            "# AlN\n",
+        ))
+        report = validate_wiki(
+            self.root,
+            check_orphans=False,
+            check_evidence=True,
+            evidence_dir=self.evidence_dir,
+            strict_provenance=True,
+        )
+        self.assertFalse(report.ok)
+        self.assertTrue(any("[E1]" in e and "missing arXiv metadata" in e for e in report.errors))
+        self.assertEqual(report.evidence.missing_count, 1)
+        self.assertEqual(report.evidence.missing[0]["reason"], "missing_metadata")
+
+    def test_arxiv_meta_without_sha256_missing_sha256(self):
+        bare_id = "2401.12345"
+        self._create_arxiv_evidence(
+            bare_id,
+            meta_extra={"sha256": None},
+        )
+
+        write(self.root, "concepts/aln.md", node(
+            "type: Concept\n"
+            "title: 'AlN'\n"
+            "basis: external\n"
+            f"sources: ['preprint:arXiv:{bare_id} via=arxiv']\n"
+            "verified_at: '2026-11-09'\n",
+            "# AlN\n",
+        ))
+        report = validate_wiki(
+            self.root,
+            check_orphans=False,
+            check_evidence=True,
+            evidence_dir=self.evidence_dir,
+            strict_provenance=True,
+        )
+        self.assertFalse(report.ok)
+        self.assertTrue(any("[E1]" in e and "missing sha256" in e for e in report.errors))
+        self.assertEqual(report.evidence.missing_count, 1)
+        self.assertEqual(report.evidence.missing[0]["reason"], "missing_sha256")
 
     def test_nonexistent_evidence_dir_raises(self):
         with self.assertRaises(FileNotFoundError):
