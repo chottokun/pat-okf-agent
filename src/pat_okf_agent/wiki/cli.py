@@ -23,7 +23,7 @@ from .frontmatter import FrontmatterError, parse_frontmatter
 from .graph import build_graph
 from .index import stale_indexes, write_indexes
 from .ingest import ingest_publication, ingest_query
-from .search import BackendUnavailable, get_backend
+from .search import BackendUnavailable, attach_link_counts, get_backend
 from .synonyms import (
     ExpandedSearchBackend,
     SynonymIndex,
@@ -418,6 +418,7 @@ def _dispatch(args: argparse.Namespace) -> int:
         except TypeError:
             hits = backend.search(args.query, limit=args.limit)
         if args.json:
+            hits = attach_link_counts(hits, args.dir)
             print(json.dumps([hit.as_dict() for hit in hits],
                              ensure_ascii=False, indent=2))
         elif not hits:

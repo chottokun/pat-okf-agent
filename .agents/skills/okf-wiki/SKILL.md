@@ -120,6 +120,7 @@ to `--backend local`.
 - Operators: uppercase `AND` / `OR` (`AND` is the default gate for ASCII queries: every term must match somewhere), prefix wildcard `term*`.
 - Zero hits on an ASCII query trigger a vocabulary typo fallback: `--json` hits then carry `is_fallback` and `query_corrections`; prefer re-querying with the corrected term for a clean ranking.
 - Read the breakdown before re-querying: `--json` hits carry `breakdown` (per-term kind/field/points, phrase, field subtotals, adjustments, gate matched/missed, total == score). The missed list and the field points show why a note ranked where it did; change the query or the filter, not your trust in the corpus. `eval-synonyms` failure rows carry `failure_detail` with the same breakdowns.
+- Informational link counts: `--json` hits carry `outgoing_links` and `backlinks` (distinct non-special internal notes in the same KB linked to and from, attached purely for the reader; never enter scoring, ranking, or breakdown totals).
 
 ### Synonym sync and quality gate
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +21,7 @@ __all__ = [
     "BackendUnavailable",
     "LocalSearchBackend",
     "SearchHit",
+    "attach_link_counts",
     "get_backend",
     "is_admin_file",
     "pattern_for",
@@ -143,6 +144,8 @@ class SearchHit:
     is_fallback: bool = False
     query_corrections: dict[str, str] | None = None
     breakdown: dict | None = None
+    outgoing_links: int | None = None
+    backlinks: int | None = None
 
     def as_dict(self) -> dict:
         d = {
@@ -159,7 +162,37 @@ class SearchHit:
             bd = _round_floats(self.breakdown, 3)
             bd["total"] = d["score"]
             d["breakdown"] = bd
+        if self.outgoing_links is not None:
+            d["outgoing_links"] = self.outgoing_links
+        if self.backlinks is not None:
+            d["backlinks"] = self.backlinks
         return d
+
+
+def attach_link_counts(hits: list[SearchHit], root: str | Path) -> list[SearchHit]:
+    """Attach graph link counts to search hits without altering ranking or score.
+
+    Link counts are informational properties of the whole KB:
+    - outgoing_links: number of distinct notes in the KB that this note links to
+    - backlinks: number of distinct notes in the KB that link to this note
+    Hits whose node is absent from the graph retain None (omitted in as_dict()).
+    """
+    from .graph import build_graph
+
+    graph = build_graph(root)
+    result: list[SearchHit] = []
+    for hit in hits:
+        if hit.node in graph.nodes:
+            result.append(
+                replace(
+                    hit,
+                    outgoing_links=len(graph.edges.get(hit.node, [])),
+                    backlinks=len(graph.backlinks.get(hit.node, [])),
+                )
+            )
+        else:
+            result.append(hit)
+    return result
 
 
 class LocalSearchBackend:

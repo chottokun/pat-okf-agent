@@ -16,7 +16,7 @@ from .context import ContextResolver
 from .graph import build_graph
 from .index import stale_indexes, write_indexes
 from .model import iter_concepts
-from .search import get_backend, pattern_for
+from .search import attach_link_counts, get_backend, pattern_for
 from .validate import validate_wiki
 
 __all__ = [
@@ -338,6 +338,7 @@ def dispatch_tool(name: str, arguments: dict[str, Any],
             hits = backend.search(query, **search_kwargs)
         except TypeError:
             hits = backend.search(query, limit=limit)
+        hits = attach_link_counts(hits, wiki)
         return [hit.as_dict() for hit in hits]
 
     if name == "okf_context":
