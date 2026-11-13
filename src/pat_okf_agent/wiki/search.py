@@ -11,6 +11,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from .model import Concept, iter_concepts, load_concept
 from .tokenize import tokenize
@@ -122,6 +123,16 @@ class BackendUnavailable(RuntimeError):
     """Raised when an optional backend (Qdrant/Gemma) is not installed."""
 
 
+def _round_floats(obj: Any, ndigits: int = 3) -> Any:
+    if isinstance(obj, float):
+        return round(obj, ndigits)
+    if isinstance(obj, dict):
+        return {k: _round_floats(v, ndigits) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_round_floats(v, ndigits) for v in obj]
+    return obj
+
+
 @dataclass(frozen=True)
 class SearchHit:
     node: str
@@ -131,6 +142,7 @@ class SearchHit:
     matched_terms: int
     is_fallback: bool = False
     query_corrections: dict[str, str] | None = None
+    breakdown: dict | None = None
 
     def as_dict(self) -> dict:
         d = {
@@ -143,6 +155,10 @@ class SearchHit:
         }
         if self.query_corrections is not None:
             d["query_corrections"] = self.query_corrections
+        if self.breakdown is not None:
+            bd = _round_floats(self.breakdown, 3)
+            bd["total"] = d["score"]
+            d["breakdown"] = bd
         return d
 
 
@@ -446,6 +462,23 @@ def _phrase_matches(phrase: str, target: str) -> bool:
     return len(norm_phrase) >= 2 and norm_phrase in norm_target
 
 
+def _is_cjk_or_katakana_bigram(term: str) -> bool:
+    """Return True if term is a 2-character Katakana or CJK/Hiragana token."""
+    if len(term) != 2:
+        return False
+    for ch in term:
+        code = ord(ch)
+        is_kata = 0x30A1 <= code <= 0x30FA or code == 0x30FC
+        is_cjk = (
+            0x4E00 <= code <= 0x9FFF
+            or 0x3400 <= code <= 0x4DBF
+            or 0x3040 <= code <= 0x309F
+        )
+        if not (is_kata or is_cjk):
+            return False
+    return True
+
+
 def _score(
     concept: Concept,
     terms: list[str],
@@ -473,14 +506,28 @@ def _score(
     clean_query = raw_query.strip().casefold()
     phrase_query = (raw_phrase_override if raw_phrase_override is not None else raw_query).strip().casefold()
     phrase_bonus = 0.0
+    phrase_matches_list: list[dict[str, Any]] = []
+    phrase_mult = 0.5 if (is_fallback and query_corrections) else 1.0
     if len(phrase_query) >= 2:
-        phrase_mult = 0.5 if (is_fallback and query_corrections) else 1.0
         if _phrase_matches(phrase_query, title_l):
-            phrase_bonus += 50.0 * phrase_mult
+            pts = 50.0 * phrase_mult
+            phrase_bonus += pts
+            phrase_matches_list.append({"field": "title", "points": pts})
         if _phrase_matches(phrase_query, desc_l):
-            phrase_bonus += 20.0 * phrase_mult
+            pts = 20.0 * phrase_mult
+            phrase_bonus += pts
+            phrase_matches_list.append({"field": "description", "points": pts})
         if _phrase_matches(phrase_query, hl_l):
-            phrase_bonus += 15.0 * phrase_mult
+            pts = 15.0 * phrase_mult
+            phrase_bonus += pts
+            phrase_matches_list.append({"field": "headings_lead", "points": pts})
+
+    phrase_dict: dict[str, Any] = {
+        "text": phrase_query,
+        "factor": phrase_mult,
+        "matches": phrase_matches_list,
+        "points": phrase_bonus,
+    }
 
     title_score = 0.0
     tag_score = 0.0
@@ -491,118 +538,237 @@ def _score(
     matched_terms = 0
     matched_aux = 0
 
+    breakdown_terms: list[dict[str, Any]] = []
+    matched_query_terms: list[str] = []
+    missed_query_terms: list[str] = []
+    matched_aux_terms: list[str] = []
+
     for term in terms:
         term_matched = False
+        term_matches: list[dict[str, Any]] = []
         is_wildcard = bool(wildcards and term in wildcards)
 
         if is_wildcard:
             # Wildcard prefix matching (0.7x weight)
             if _field_has_wildcard(title_l, term):
-                title_score += 20.0 * 0.7
+                pts = 20.0 * 0.7
+                title_score += pts
                 term_matched = True
+                term_matches.append({"field": "title", "kind": "wildcard", "points": pts, "factor": 0.7})
             if any(_field_has_wildcard(tag.casefold(), term) for tag in concept.tags):
-                tag_score += 15.0 * 0.7
+                pts = 15.0 * 0.7
+                tag_score += pts
                 term_matched = True
+                term_matches.append({"field": "tags", "kind": "wildcard", "points": pts, "factor": 0.7})
             if _field_has_wildcard(desc_l, term):
-                desc_score += 10.0 * 0.7
+                pts = 10.0 * 0.7
+                desc_score += pts
                 term_matched = True
+                term_matches.append({"field": "description", "kind": "wildcard", "points": pts, "factor": 0.7})
             if _field_has_wildcard(hl_l, term):
-                hl_score += 5.0 * 0.7
+                pts = 5.0 * 0.7
+                hl_score += pts
                 term_matched = True
+                term_matches.append({"field": "headings_lead", "kind": "wildcard", "points": pts, "factor": 0.7})
             cnt = _count_wildcard_in_body(clean_body_l, term)
             if cnt > 0:
-                body_score += float(cnt) * 0.7
+                pts = float(cnt) * 0.7
+                body_score += pts
                 term_matched = True
+                term_matches.append({"field": "body", "kind": "wildcard", "points": pts, "factor": 0.7, "count": cnt})
         else:
             term_stem = strip_suffix(term)
+            default_kind = "bigram" if _is_cjk_or_katakana_bigram(term) else "exact"
             if term in title_l:
-                title_score += 20.0
+                pts = 20.0
+                title_score += pts
                 term_matched = True
+                term_matches.append({"field": "title", "kind": default_kind, "points": pts})
             if any(term in tag.casefold() for tag in concept.tags):
-                tag_score += 15.0
+                pts = 15.0
+                tag_score += pts
                 term_matched = True
+                term_matches.append({"field": "tags", "kind": default_kind, "points": pts})
             if term in desc_l:
-                desc_score += 10.0
+                pts = 10.0
+                desc_score += pts
                 term_matched = True
+                term_matches.append({"field": "description", "kind": default_kind, "points": pts})
             if term in hl_l:
-                hl_score += 5.0
+                pts = 5.0
+                hl_score += pts
                 term_matched = True
+                term_matches.append({"field": "headings_lead", "kind": default_kind, "points": pts})
             cnt = clean_body_l.count(term)
             if cnt > 0:
-                body_score += float(cnt)
+                pts = float(cnt)
+                body_score += pts
                 term_matched = True
+                term_matches.append({"field": "body", "kind": default_kind, "points": pts, "count": cnt})
 
             # Inflectional stem match (0.8x)
             if term_stem:
                 if term not in title_l and _field_has_stem(title_l, term_stem):
-                    title_score += 20.0 * 0.8
+                    pts = 20.0 * 0.8
+                    title_score += pts
                     term_matched = True
+                    term_matches.append({"field": "title", "kind": "stem", "points": pts, "factor": 0.8})
                 if not any(term in tag.casefold() for tag in concept.tags) and any(
                     _field_has_stem(tag.casefold(), term_stem) for tag in concept.tags
                 ):
-                    tag_score += 15.0 * 0.8
+                    pts = 15.0 * 0.8
+                    tag_score += pts
                     term_matched = True
+                    term_matches.append({"field": "tags", "kind": "stem", "points": pts, "factor": 0.8})
                 if term not in desc_l and _field_has_stem(desc_l, term_stem):
-                    desc_score += 10.0 * 0.8
+                    pts = 10.0 * 0.8
+                    desc_score += pts
                     term_matched = True
+                    term_matches.append({"field": "description", "kind": "stem", "points": pts, "factor": 0.8})
                 if term not in hl_l and _field_has_stem(hl_l, term_stem):
-                    hl_score += 5.0 * 0.8
+                    pts = 5.0 * 0.8
+                    hl_score += pts
                     term_matched = True
+                    term_matches.append({"field": "headings_lead", "kind": "stem", "points": pts, "factor": 0.8})
                 if cnt == 0:
                     stem_cnt = _count_stem_in_body(clean_body_l, term_stem)
                     if stem_cnt > 0:
-                        body_score += float(stem_cnt) * 0.8
+                        pts = float(stem_cnt) * 0.8
+                        body_score += pts
                         term_matched = True
+                        term_matches.append({"field": "body", "kind": "stem", "points": pts, "factor": 0.8, "count": stem_cnt})
 
         if term_matched:
             matched_terms += 1
+            matched_query_terms.append(term)
+        else:
+            missed_query_terms.append(term)
+
+        breakdown_terms.append({
+            "term": term,
+            "role": "query",
+            "matches": term_matches,
+        })
 
     if aux_terms:
+        corr_orig_map: dict[str, str] = {}
+        if query_corrections:
+            for orig, corr in query_corrections.items():
+                for ct in tokenize(corr):
+                    if ct not in corr_orig_map:
+                        corr_orig_map[ct] = orig
+
         for term in aux_terms:
             term_matched = False
+            term_matches = []
+            is_correction = term in corr_orig_map
+            aux_source = "correction" if is_correction else "synonym"
+            aux_kind = aux_source
+
             if term in title_l:
-                title_score += 10.0
+                pts = 10.0
+                title_score += pts
                 term_matched = True
+                term_matches.append({"field": "title", "kind": aux_kind, "points": pts, "factor": 0.5})
             if any(term in tag.casefold() for tag in concept.tags):
-                tag_score += 7.5
+                pts = 7.5
+                tag_score += pts
                 term_matched = True
+                term_matches.append({"field": "tags", "kind": aux_kind, "points": pts, "factor": 0.5})
             if term in desc_l:
-                desc_score += 5.0
+                pts = 5.0
+                desc_score += pts
                 term_matched = True
+                term_matches.append({"field": "description", "kind": aux_kind, "points": pts, "factor": 0.5})
             if term in hl_l:
-                hl_score += 2.5
+                pts = 2.5
+                hl_score += pts
                 term_matched = True
+                term_matches.append({"field": "headings_lead", "kind": aux_kind, "points": pts, "factor": 0.5})
             cnt = clean_body_l.count(term)
             if cnt > 0:
-                body_score += float(cnt) * 0.5
+                pts = float(cnt) * 0.5
+                body_score += pts
                 term_matched = True
+                term_matches.append({"field": "body", "kind": aux_kind, "points": pts, "factor": 0.5, "count": cnt})
+
             if term_matched:
                 matched_aux += 1
+                matched_aux_terms.append(term)
+
+            aux_entry: dict[str, Any] = {
+                "term": term,
+                "role": "aux",
+                "source": aux_source,
+                "matches": term_matches,
+            }
+            if is_correction:
+                aux_entry["corrected_from"] = corr_orig_map[term]
+            breakdown_terms.append(aux_entry)
 
     if matched_terms == 0 and matched_aux == 0:
         return None
 
     # SimpleWiki AND condition for pure ASCII alphanumeric queries
     is_pure_ascii = clean_query.isascii() and bool(re.match(r"^[a-zA-Z0-9_\-\s]+$", clean_query))
+    gate_rule = "none"
     if is_pure_ascii:
         if is_fallback and query_corrections:
+            gate_rule = "fallback_corrections"
             total_terms_count = len(terms) + len(aux_terms or [])
             total_matched = matched_terms + matched_aux
             if total_terms_count > 1 and total_matched < total_terms_count:
                 return None
         elif relaxed_and:
+            gate_rule = "relaxed_and"
             if len(terms) > 1:
                 required = (len(terms) + 1) // 2
                 if matched_terms < required:
                     return None
-        elif not aux_terms and len(terms) > 1 and matched_terms < len(terms):
-            return None
+        elif not aux_terms and len(terms) > 1:
+            gate_rule = "and"
+            if matched_terms < len(terms):
+                return None
+
+    gate_dict: dict[str, Any] = {
+        "rule": gate_rule,
+        "matched": matched_query_terms,
+        "missed": missed_query_terms,
+        "aux_matched": matched_aux_terms,
+    }
+    if gate_rule == "relaxed_and":
+        gate_dict["required"] = (len(terms) + 1) // 2
+
+    fields_dict: dict[str, float] = {
+        "title": title_score,
+        "tags": tag_score,
+        "description": desc_score,
+        "headings_lead": hl_score,
+        "body": body_score,
+    }
+    adjustments_list: list[dict[str, Any]] = []
 
     # Saturated caps (Owner decision: body cap = 10.0)
-    hl_score = min(hl_score, 10.0)
-    body_score = min(body_score, 10.0)
+    hl_capped = min(hl_score, 10.0)
+    if hl_score > 10.0:
+        adjustments_list.append({
+            "kind": "cap",
+            "field": "headings_lead",
+            "points": hl_capped - hl_score,
+        })
+    hl_score = hl_capped
+
+    body_capped = min(body_score, 10.0)
+    if body_score > 10.0:
+        adjustments_list.append({
+            "kind": "cap",
+            "field": "body",
+            "points": body_capped - body_score,
+        })
+    body_score = body_capped
 
     score = phrase_bonus + title_score + tag_score + desc_score + hl_score + body_score
+    unattenuated_score = score
 
     # Deprecated attenuation
     tags_lower = {t.lower() for t in concept.tags}
@@ -611,6 +777,20 @@ def _score(
         or concept.meta.get("deprecated") is True
     ):
         score *= 0.3
+        adjustments_list.append({
+            "kind": "deprecated_attenuation",
+            "factor": 0.3,
+            "points": score - unattenuated_score,
+        })
+
+    breakdown = {
+        "terms": breakdown_terms,
+        "phrase": phrase_dict,
+        "fields": fields_dict,
+        "adjustments": adjustments_list,
+        "gate": gate_dict,
+        "total": score,
+    }
 
     effective_matched = matched_terms + (matched_aux if is_fallback else 0)
     return SearchHit(
@@ -621,6 +801,7 @@ def _score(
         matched_terms=effective_matched,
         is_fallback=is_fallback,
         query_corrections=query_corrections,
+        breakdown=breakdown,
     )
 
 
