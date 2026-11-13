@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning.
 
+## [Unreleased]
+
+### Added
+
+- Informational `outgoing_links` and `backlinks` fields on search hits in
+  `okf search --json` and MCP `okf_search`, reporting the number of distinct
+  internal notes linked to and from in the same KB without affecting scoring,
+  ranking, or breakdown totals.
+
 ## [0.2.0] - 2026-11-02
 
 ### Added
