@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .frontmatter import FrontmatterError, parse_frontmatter
+from pat_okf_agent.epo import _safe_name
 from .model import (
     BASIS_VALUES,
     KNOWN_SOURCE_KINDS,
@@ -78,9 +79,11 @@ class EvidenceReport:
     orphan_count: int = 0
     unexplained_orphan_count: int = 0
     tombstone_count: int = 0
+    unverifiable_count: int = 0
     missing: list[dict[str, Any]] = field(default_factory=list)
     orphans: list[dict[str, Any]] = field(default_factory=list)
     tombstones: list[dict[str, Any]] = field(default_factory=list)
+    unverifiable: list[dict[str, Any]] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -90,9 +93,11 @@ class EvidenceReport:
             "orphan_count": self.orphan_count,
             "unexplained_orphan_count": self.unexplained_orphan_count,
             "tombstone_count": self.tombstone_count,
+            "unverifiable_count": self.unverifiable_count,
             "missing": list(self.missing),
             "orphans": list(self.orphans),
             "tombstones": list(self.tombstones),
+            "unverifiable": list(self.unverifiable),
         }
 
 
@@ -489,6 +494,22 @@ def validate_evidence(
 
     warnings: list[tuple[str, str]] = []
     missing: list[dict[str, Any]] = []
+    unverifiable: list[dict[str, Any]] = []
+
+    arxiv_dir = evidence_path / "arxiv"
+    arxiv_meta_files: dict[str, Path] = {}
+    arxiv_body_files: dict[str, list[Path]] = {}
+
+    if arxiv_dir.is_dir():
+        for p in arxiv_dir.iterdir():
+            if not p.is_file() or p.name.endswith(".tmp"):
+                continue
+            if p.name.endswith(".meta.json"):
+                k = p.name[:-len(".meta.json")]
+                arxiv_meta_files[k] = p
+            else:
+                k = p.name.rsplit(".", 1)[0]
+                arxiv_body_files.setdefault(k, []).append(p)
 
     # Map snapshot key -> list of (rel, entry)
     referenced_by: dict[str, list[tuple[str, SourceEntry]]] = {}
@@ -635,7 +656,123 @@ def validate_evidence(
                 classified = classify_target(src_entry.id, kind=src_entry.kind)
             except ValueError:
                 continue
-            if classified.identifier_type != "url":
+            if classified.identifier_type == "arxiv":
+                stem = _safe_name(classified.raw_id)
+                referenced_by.setdefault(f"arxiv:{stem}", []).append((rel, src_entry))
+                src_str = f"{src_entry.kind}:{src_entry.id}"
+                meta_path = arxiv_meta_files.get(stem)
+                b_list = arxiv_body_files.get(stem, [])
+                has_body = bool(b_list)
+                has_meta = meta_path is not None
+
+                if not has_body and not has_meta:
+                    warnings.append((
+                        "E1",
+                        f"{rel}: [E1] missing arXiv metadata for {src_str} (expected arxiv/{stem}.meta.json)",
+                    ))
+                    missing.append({
+                        "rel": rel,
+                        "source": src_str,
+                        "key": stem,
+                        "reason": "missing_metadata",
+                        "expected_meta_path": str(arxiv_dir / f"{stem}.meta.json"),
+                    })
+                elif not has_body and has_meta:
+                    warnings.append((
+                        "E1",
+                        f"{rel}: [E1] missing arXiv body file for {src_str} (expected arxiv/{stem}.<ext>)",
+                    ))
+                    missing.append({
+                        "rel": rel,
+                        "source": src_str,
+                        "key": stem,
+                        "reason": "missing_body",
+                        "expected_body_pattern": str(arxiv_dir / f"{stem}.<ext>"),
+                    })
+                elif has_body and not has_meta:
+                    sorted_bodies = sorted(b_list)
+                    warnings.append((
+                        "E4",
+                        f"{rel}: [E4] legacy arXiv evidence without metadata for {src_str} (expected arxiv/{stem}.meta.json)",
+                    ))
+                    unverifiable.append({
+                        "rel": rel,
+                        "source": src_str,
+                        "key": stem,
+                        "reason": "legacy_no_metadata",
+                        "body_path": str(sorted_bodies[0]),
+                    })
+                else:
+                    try:
+                        meta_json = json.loads(meta_path.read_text("utf-8"))
+                    except Exception:
+                        meta_json = {}
+
+                    deleted_at = meta_json.get("deleted_at")
+                    if deleted_at and str(deleted_at).strip():
+                        warnings.append((
+                            "E1",
+                            f"{rel}: [E1] source {src_str} references tombstoned arXiv evidence (arxiv/{stem}.meta.json, deleted_at={deleted_at})",
+                        ))
+                        missing.append({
+                            "rel": rel,
+                            "source": src_str,
+                            "key": stem,
+                            "reason": "tombstone_referenced",
+                            "deleted_at": str(deleted_at).strip(),
+                            "meta_path": str(meta_path),
+                        })
+                        continue
+
+                    expected_sha = meta_json.get("sha256")
+                    if expected_sha is None or not str(expected_sha).strip():
+                        warnings.append((
+                            "E1",
+                            f"{rel}: [E1] missing sha256 in arXiv metadata for {src_str} (arxiv/{stem}.meta.json)",
+                        ))
+                        missing.append({
+                            "rel": rel,
+                            "source": src_str,
+                            "key": stem,
+                            "reason": "missing_sha256",
+                            "meta_path": str(meta_path),
+                        })
+                    else:
+                        expected_str = str(expected_sha).strip()
+                        expected_hex = expected_str.removeprefix("sha256:")
+                        matched = False
+                        actual_val = None
+                        for b_path in b_list:
+                            try:
+                                b_bytes = b_path.read_bytes()
+                                b_hex = hashlib.sha256(b_bytes).hexdigest()
+                            except Exception:
+                                continue
+                            if actual_val is None:
+                                actual_val = (
+                                    f"sha256:{b_hex}"
+                                    if expected_str.startswith("sha256:")
+                                    else b_hex
+                                )
+                            if b_hex == expected_hex:
+                                matched = True
+                                break
+                        if not matched:
+                            warnings.append((
+                                "E1",
+                                f"{rel}: [E1] arXiv sha256 mismatch for {src_str} (expected {expected_str}, got {actual_val})",
+                            ))
+                            missing.append({
+                                "rel": rel,
+                                "source": src_str,
+                                "key": stem,
+                                "reason": "sha256_mismatch",
+                                "expected": expected_str,
+                                "actual": actual_val,
+                                "meta_path": str(meta_path),
+                            })
+                continue
+            elif classified.identifier_type != "url":
                 continue
             key = snapshot_key_for_url(classified)
             referenced_by.setdefault(key, []).append((rel, src_entry))
@@ -760,9 +897,11 @@ def validate_evidence(
         orphan_count=len(orphans),
         unexplained_orphan_count=unexplained_orphan_count,
         tombstone_count=len(tombstones),
+        unverifiable_count=len(unverifiable),
         missing=missing,
         orphans=orphans,
         tombstones=tombstones,
+        unverifiable=unverifiable,
     )
     return report, warnings
 

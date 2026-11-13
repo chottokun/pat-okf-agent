@@ -293,17 +293,19 @@ Phase 3 `< 4,000`（`--phases` で各フェーズを出力）。`--backend sqlit
 |---|---|---|---|
 | **構文・構造エラー (`validate_meta`)** | `type` 欠落、不正型、不正日付、未知の `scope`、`sources` 文法違反、リンク切れ、Wiki ルート脱出 | エラー（exit 1） | エラー（exit 1） |
 | **自己矛盾・拡張検証ルール (`P2`, `P4`, `P5`, `P9`)** | P2（external/mixed なのに sources も外部リンクも無し）、P4（未検証マーカー外のブロック局所裏付け欠落）、P5（external なのに未検証マーカー含有）、P9（未知の basis 値） | 警告（exit 0） | **エラー昇格（exit 1）** |
-| **証跡整合ルール (`E1`)**（`--check-evidence` 指定時） | E1（参照スナップショットの欠落・破損・墓石参照） | 警告（exit 0） | **エラー昇格（exit 1）** |
+| **証跡整合ルール (`E1`)**（`--check-evidence` 指定時） | E1（参照スナップショット・証跡の欠落・破損・墓石参照） | 警告（exit 0） | **エラー昇格（exit 1）** |
 | **品質・時点警告 (`P1`, `P3`, `P6`, `P7`, `P8`)** | P1（basis 未指定）、P3（external なのに verified_at 無し）、P6（Web 系 sources の retrieved 欠落）、P7（未知の source kind）、P8（揮発性ニュース出典の3年経過）、孤立ノード、index.md 欠落 | 警告（exit 0） | 警告（exit 0） |
 | **証跡監査警告 (`E2`, `E3`)**（`--check-evidence` 指定時） | E2（理由未記録の孤立スナップショット）、E3（メタデータ欠落ファイルまたは本体欠損ファイル） | 警告（exit 0） | 警告（exit 0） |
+| **レガシー証跡警告 (`E4`)**（`--check-evidence` 指定時） | E4（サイドカー未作成のレガシー arXiv 証跡 = 検証不能・破損ではない） | 警告（exit 0） | 警告（exit 0・昇格対象外） |
 
 ### 証跡整合チェック（--check-evidence）
 
-`--check-evidence` を指定すると、各ノートの `sources:` に記載された URL 出典（`web:`, `datasheet:` 等）および内部記録出典（`ops-record:`）に対応するスナップショットファイル（`.meta.json` および生本体ファイル）の実在と整合性を検査します。また、未参照スナップショット（孤立）の理由記録状況や墓石（`tombstones`）を監査します。
+`--check-evidence` を指定すると、各ノートの `sources:` に記載された URL 出典（`web:`, `datasheet:` 等）、内部記録出典（`ops-record:`）、および arXiv 出典（`preprint:arXiv:<id>` 等）に対応する証跡ファイル（`.meta.json` および生本体ファイル）の実在と整合性を検査します。また、未参照スナップショット（孤立）の理由記録状況や墓石（`tombstones`）を監査します。
 保存先ディレクトリを既定（`data/external/source_verify`）から変更する場合は `--evidence-dir <dir>` で上書きします。
 
 - **URL 出典**: URL からスナップショットキー（`.meta.json` / 本体）を導出し、実在・墓石・本体有無を検査します。
 - **内部記録（`ops-record`）**: 文法 `ops-record:<path>[#<section>] snapshot=<key>` の `snapshot=<key>` 属性から直接 `snapshots/<key>.meta.json` および本体ファイルを解決します（キー内の空文字、`/`、`\`、`..` 等のパス巡回は `invalid_snapshot_key` として `E1`）。さらに `.meta.json` 内の `sha256` フィールドの存在と、本体ファイル（複数ある場合はいずれか1つ）の SHA-256 ハッシュ一致を機械検証します（欠落は `missing_sha256`、不一致は `sha256_mismatch` として `E1`）。
+- **arXiv 出典**: `<evidence-dir>/arxiv/<safe_id>.xml` とサイドカー `<safe_id>.meta.json` を検査します。両方存在する場合は SHA-256 ハッシュ一致を検証します（不一致・ハッシュ欠落・墓石参照は `E1`）。本体 XML のみ存在しサイドカーが未作成のレガシー証跡は `legacy_no_metadata` として `E4` 警告を出し、`unverifiable` に計上します（破損ではないため `--strict-provenance` でもエラー昇格しません）。本体・メタデータ双方が欠落している場合、またはメタデータのみ存在し本体が欠落している場合は `E1` となります。`okf verify-source` を再実行することでレガシー証跡にサイドカーを補完できます。
 
 ```bash
 # 通常トリアージ実行（警告一覧表示、エラーが無ければ exit 0）

@@ -1339,6 +1339,7 @@ class SourceVerifier:
         cached = False
         raw_path: str | None = None
         sha256_digest: str | None = None
+        url = f"https://export.arxiv.org/api/query?id_list={urllib.parse.quote(bare_id)}"
 
         if cache_path.exists() and not self.refresh:
             cached = True
@@ -1347,8 +1348,29 @@ class SourceVerifier:
             sha256_digest = f"sha256:{hashlib.sha256(data_bytes).hexdigest()}"
             xml_text = data_bytes.decode("utf-8", errors="replace")
             meta, extracted_issued, all_years, found = self._parse_arxiv_atom(xml_text)
+            if not found:
+                checks = VerificationChecks(
+                    title_match=False if expect_title else None,
+                    author_match=False if expect_author else None,
+                    year_match=False if expect_year else None,
+                )
+                return VerificationResult(
+                    ok=False,
+                    status="not_found",
+                    input=target if isinstance(target, str) else target.raw_id,
+                    identifier=classified.identifier,
+                    identifier_type="arxiv",
+                    kind=classified.kind,
+                    registration_agency=None,
+                    via="arxiv",
+                    retrieved_at=retrieved_at,
+                    issued=issued or None,
+                    metadata=meta,
+                    checks=checks,
+                    evidence=EvidenceRecord(cached=True),
+                    okf_source=None,
+                )
         else:
-            url = f"https://export.arxiv.org/api/query?id_list={urllib.parse.quote(bare_id)}"
             status, _, body = self._http_request(url, is_ledger=True, interval=3.0)
             if status != 200:
                 raise SourceApiError(status, url, body.decode("utf-8", errors="replace"))
@@ -1380,9 +1402,27 @@ class SourceVerifier:
 
             _atomic_write(cache_path, xml_text)
             raw_path = str(cache_path)
-            sha256_digest = f"sha256:{hashlib.sha256(body).hexdigest()}"
+            data_bytes = cache_path.read_bytes()
+            sha256_digest = f"sha256:{hashlib.sha256(data_bytes).hexdigest()}"
 
         effective_issued = issued or extracted_issued
+
+        meta_payload = {
+            "identifier": f"arXiv:{bare_id}",
+            "identifier_type": "arxiv",
+            "kind": classified.kind,
+            "url": url,
+            "via": "arxiv",
+            "retrieved_at": retrieved_at,
+            "sha256": sha256_digest,
+            "title": meta.title,
+            "issued": effective_issued,
+        }
+        meta_path = cache_path.parent / f"{safe_id}.meta.json"
+        _atomic_write(
+            meta_path,
+            json.dumps(meta_payload, indent=2, ensure_ascii=False),
+        )
         checks, status_str, ok = _evaluate_checks(
             meta,
             expect_title=expect_title,
