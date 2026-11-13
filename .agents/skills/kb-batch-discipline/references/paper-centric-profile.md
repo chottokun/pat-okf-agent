@@ -2,7 +2,7 @@
 
 Companion reference of the **KB Batch Collection Discipline** skill (`.agents/skills/kb-batch-discipline/SKILL.md`, which carries the operative summary of this profile). Read this full text before running a paper-centric batch.
 
-Applies to batches whose primary sources are papers (peer-reviewed or preprint) for a paper-centric KB (e.g. `kb-ai-research`). This profile operationalizes the generic Phase-2 paper target for such KBs; candidate selection still follows `## Candidate Selection & Proposal` above, and settled conventions (evidence layout, tag tiers, version grounding, cross-KB references, gate forms) live in `.agents/skills/okf-design-conventions/SKILL.md` and are referenced here, not restated.
+Applies to batches whose primary sources are papers (peer-reviewed or preprint) for a paper-centric KB (e.g. `kb-ai-research`). This profile operationalizes the generic Phase-2 paper target for such KBs; candidate selection still follows `## Candidate Selection & Proposal` in the parent SKILL.md, and settled conventions (evidence layout, tag tiers, version grounding, cross-KB references, gate forms) live in `.agents/skills/okf-design-conventions/SKILL.md` and are referenced here, not restated.
 
 ### Source Composition per Concept
 
