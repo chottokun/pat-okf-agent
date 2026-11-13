@@ -100,7 +100,7 @@ tags: [epo, patent, ep]      # 推奨（文字列のリスト）
 timestamp: 2026-10-29T00:00:00Z
 scope: taxonomy              # taxonomy | workflow | synergistic | gotchas
 publication: EP9999999B1     # 任意（公報番号の直接参照）
-basis: external              # 任意（推奨）: external | model | mixed
+basis: external              # 任意（推奨）: external | model | mixed | ops-record
 sources:                     # 任意: 出典リスト
   - "patent-biblio:EP9999999B1 via=epo-ops"
   - "patent-claims:EP9999999B1 via=epo-ops"
@@ -114,6 +114,7 @@ verified_at: "2026-10-29"    # 任意: 照合確認日（YYYY-MM-DD）
   - `external`: 外部出典のみで裏付けられている（stub を除く全ノートで `sources` または external ノードへの相対リンク、および `verified_at` が必要）。
   - `model`: LLM の一般知識のみで書かれている。
   - `mixed`: 外部出典とモデルの一般知識が混在している（`sources` または external ノードへの相対リンクが必要）。
+  - `ops-record`: 運用記録・実験ノート等、自身の記録そのものが一次根拠となっている。
 - **`sources`**: 出典文字列のリスト。
   - 文法: `<kind>:<id>[ issued=YYYY-MM-DD][ retrieved=YYYY-MM-DD][ via=<channel>]`（空白区切り）
   - 属性キー: `issued`（発行日）、`retrieved`（取得日）、`via`（取得経路。例: `epo-ops`, `epo-eps`）
@@ -290,8 +291,8 @@ Phase 3 `< 4,000`（`--phases` で各フェーズを出力）。`--backend sqlit
 
 | 検査種別 | 対象・ルール | 既定動作 | `--strict-provenance` |
 |---|---|---|---|
-| **構文・構造エラー (`validate_meta`)** | `type` 欠落、不正型、不正日付、未知の `scope`/`basis`、`sources` 文法違反、リンク切れ、Wiki ルート脱出 | エラー（exit 1） | エラー（exit 1） |
-| **自己矛盾ルール (`P2`, `P4`, `P5`)** | P2（external/mixed なのに sources も外部リンクも無し）、P4（未検証マーカー外のブロック局所裏付け欠落）、P5（external なのに未検証マーカー含有） | 警告（exit 0） | **エラー昇格（exit 1）** |
+| **構文・構造エラー (`validate_meta`)** | `type` 欠落、不正型、不正日付、未知の `scope`、`sources` 文法違反、リンク切れ、Wiki ルート脱出 | エラー（exit 1） | エラー（exit 1） |
+| **自己矛盾・拡張検証ルール (`P2`, `P4`, `P5`, `P9`)** | P2（external/mixed なのに sources も外部リンクも無し）、P4（未検証マーカー外のブロック局所裏付け欠落）、P5（external なのに未検証マーカー含有）、P9（未知の basis 値） | 警告（exit 0） | **エラー昇格（exit 1）** |
 | **証跡整合ルール (`E1`)**（`--check-evidence` 指定時） | E1（参照スナップショットの欠落・破損・墓石参照） | 警告（exit 0） | **エラー昇格（exit 1）** |
 | **品質・時点警告 (`P1`, `P3`, `P6`, `P7`, `P8`)** | P1（basis 未指定）、P3（external なのに verified_at 無し）、P6（Web 系 sources の retrieved 欠落）、P7（未知の source kind）、P8（揮発性ニュース出典の3年経過）、孤立ノード、index.md 欠落 | 警告（exit 0） | 警告（exit 0） |
 | **証跡監査警告 (`E2`, `E3`)**（`--check-evidence` 指定時） | E2（理由未記録の孤立スナップショット）、E3（メタデータ欠落ファイルまたは本体欠損ファイル） | 警告（exit 0） | 警告（exit 0） |

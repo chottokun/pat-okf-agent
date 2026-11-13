@@ -39,7 +39,7 @@ __all__ = [
     "validate_wiki",
 ]
 
-STRICT_PROVENANCE_RULES = frozenset({"P2", "P4", "P5", "E1"})
+STRICT_PROVENANCE_RULES = frozenset({"P2", "P4", "P5", "E1", "P9"})
 
 _UNVERIFIED_ALERT_START_RE = re.compile(
     r"^>\s*\[!NOTE\]\s*(?:一般知識（未検証）|General Knowledge \(Unverified\))\s*$",
@@ -450,6 +450,10 @@ def validate_provenance(
                             warnings.append(
                                 ("P8", f"{rel}: [P8] volatile sources ({latest_source_date.isoformat()}) are >= 3 years old as of {ref_today.isoformat()}")
                             )
+
+        # P9
+        if not stub and isinstance(basis, str) and basis not in BASIS_VALUES:
+            warnings.append(("P9", f"{rel}: [P9] unknown basis: {basis}"))
 
     return warnings
 

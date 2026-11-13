@@ -47,7 +47,7 @@ SCOPE_WEIGHTS: dict[str, float] = {
     "gotchas": 2.0,
 }
 
-BASIS_VALUES: tuple[str, ...] = ("external", "model", "mixed")
+BASIS_VALUES: tuple[str, ...] = ("external", "model", "mixed", "ops-record")
 
 KNOWN_SOURCE_KINDS: tuple[str, ...] = (
     "patent-biblio",
@@ -362,7 +362,7 @@ def validate_meta(meta: dict[str, Any]) -> list[str]:
 
     basis = meta.get("basis")
     if basis is not None:
-        if not isinstance(basis, str) or basis not in BASIS_VALUES:
+        if not isinstance(basis, str):
             errors.append(f"invalid basis: {basis}")
 
     sources = meta.get("sources")
