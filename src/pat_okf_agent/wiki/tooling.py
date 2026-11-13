@@ -35,7 +35,11 @@ class ToolError(RuntimeError):
 TOOL_SPECS: list[dict[str, Any]] = [
     {
         "name": "okf_search",
-        "description": "Search an OKF wiki and return ranked concept paths.",
+        "description": (
+            "Search an OKF wiki and return ranked hits with per-hit score "
+            "breakdowns. type/scope/include_admin filter like the okf search "
+            "CLI; expand adds synonyms.json aliases as 0.5x auxiliary terms."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -44,6 +48,20 @@ TOOL_SPECS: list[dict[str, Any]] = [
                 "limit": {
                     "type": "integer", "minimum": 1, "maximum": 100,
                     "default": 10,
+                },
+                "type": {
+                    "type": "string",
+                    "description": (
+                        "Filter by note type (e.g. concept, patent); "
+                        "comma-separated values allowed, mirroring okf search --type."
+                    ),
+                },
+                "scope": {
+                    "type": "string",
+                    "description": (
+                        "Filter by OKF scope (taxonomy, workflow, synergistic, "
+                        "gotchas); comma-separated values allowed, mirroring okf search --scope."
+                    ),
                 },
                 "backend": {
                     "type": "string",
@@ -70,9 +88,20 @@ TOOL_SPECS: list[dict[str, Any]] = [
                     "type": "string", "enum": ["openai", "gemini"],
                     "default": "openai",
                 },
-                "expand_synonyms": {
+                "expand": {
                     "type": "boolean",
-                    "description": "Use <wiki>/synonyms.json query aliases.",
+                    "description": (
+                        "Expand the query with <wiki>/synonyms.json aliases as "
+                        "inline 0.5x auxiliary terms (same as okf search --expand)."
+                    ),
+                    "default": False,
+                },
+                "include_admin": {
+                    "type": "boolean",
+                    "description": (
+                        "Include admin/aggregate notes (BUILDLOG, SUMMARY, index); "
+                        "default false mirrors okf search --no-admin."
+                    ),
                     "default": False,
                 },
             },
@@ -123,8 +152,14 @@ TOOL_SPECS: list[dict[str, Any]] = [
                     "type": "string", "enum": ["openai", "gemini"],
                     "default": "openai",
                 },
-                "expand_synonyms": {
-                    "type": "boolean", "default": False,
+                "expand": {
+                    "type": "boolean",
+                    "description": (
+                        "Expand the seed search with <wiki>/synonyms.json "
+                        "aliases as inline 0.5x auxiliary terms "
+                        "(same as okf context --expand)."
+                    ),
+                    "default": False,
                 },
                 "phases": {
                     "type": "boolean",
@@ -286,8 +321,23 @@ def dispatch_tool(name: str, arguments: dict[str, Any],
     if name == "okf_search":
         query = _required_string(arguments, "query")
         limit = _bounded_int(arguments, "limit", 10, 1, 100)
-        hits = _tool_backend(arguments, wiki, root=root_path).search(
-            query, limit=limit)
+        doc_types = _string_filters(arguments, "type")
+        scopes = _string_filters(arguments, "scope")
+        include_admin = _boolean(arguments, "include_admin", False)
+
+        search_kwargs: dict[str, Any] = {"limit": limit}
+        if doc_types:
+            search_kwargs["doc_type"] = doc_types
+        if scopes:
+            search_kwargs["scope"] = scopes
+        if include_admin:
+            search_kwargs["include_admin"] = include_admin
+
+        backend = _tool_backend(arguments, wiki, root=root_path)
+        try:
+            hits = backend.search(query, **search_kwargs)
+        except TypeError:
+            hits = backend.search(query, limit=limit)
         return [hit.as_dict() for hit in hits]
 
     if name == "okf_context":
@@ -405,7 +455,8 @@ def _tool_backend(arguments: dict[str, Any], wiki: Path, *, root: Path):
     else:
         base = get_backend(
             backend, wiki, db_path=db_path)
-    if _boolean(arguments, "expand_synonyms", False):
+    expand = _boolean(arguments, "expand", False)
+    if expand:
         from .synonyms import ExpandedSearchBackend, SynonymIndex
         path = wiki / "synonyms.json"
         if not path.is_file():
@@ -514,6 +565,18 @@ def _optional_string(arguments: dict[str, Any], key: str) -> str | None:
     if not isinstance(value, str):
         raise ToolError(f"{key} must be a string")
     return value
+
+
+def _string_filters(arguments: dict[str, Any], key: str) -> list[str]:
+    raw = _optional_string(arguments, key)
+    if not raw:
+        return []
+    items: list[str] = []
+    for item in raw.split(","):
+        cleaned = item.strip().casefold()
+        if cleaned:
+            items.append(cleaned)
+    return items
 
 
 def _boolean(arguments: dict[str, Any], key: str, default: bool) -> bool:

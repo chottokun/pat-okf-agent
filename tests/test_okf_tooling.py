@@ -242,7 +242,7 @@ class ToolingTests(unittest.TestCase):
         expanded = dispatch_tool(
             "okf_search",
             {"wiki": "wiki", "query": "metallic glass",
-             "expand_synonyms": True},
+             "expand": True},
             root=self.base,
         )
         self.assertEqual(expanded[0]["node"], "a.md")
@@ -255,7 +255,12 @@ class ToolingTests(unittest.TestCase):
         schema = next(spec for spec in TOOL_SPECS
                       if spec["name"] == "okf_search")["inputSchema"]
         self.assertIn("qdrant", schema["properties"]["backend"]["enum"])
-        self.assertIn("expand_synonyms", schema["properties"])
+        self.assertIn("expand", schema["properties"])
+        self.assertNotIn("expand_synonyms", schema["properties"])
+        context_schema = next(spec for spec in TOOL_SPECS
+                              if spec["name"] == "okf_context")["inputSchema"]
+        self.assertIn("expand", context_schema["properties"])
+        self.assertNotIn("expand_synonyms", context_schema["properties"])
 
     def test_wiki_stats_matches_dispatcher(self):
         direct = wiki_stats(self.wiki)

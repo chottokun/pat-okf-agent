@@ -127,6 +127,135 @@ class McpServerTests(unittest.TestCase):
         self.assertEqual(responses[1]["error"]["code"], -32700)
         self.assertEqual(len(responses[2]["result"]["tools"]), 7)
 
+    def test_search_schema_declares_filter_params(self):
+        listed = self.request("tools/list")
+        tools = listed["result"]["tools"]
+        search_tool = next(t for t in tools if t["name"] == "okf_search")
+        props = search_tool["inputSchema"]["properties"]
+        for param in ("type", "scope", "expand", "include_admin"):
+            self.assertIn(param, props)
+        self.assertEqual(props["expand"]["type"], "boolean")
+        self.assertEqual(props["include_admin"]["type"], "boolean")
+        self.assertEqual(props["type"]["type"], "string")
+        self.assertEqual(props["scope"]["type"], "string")
+
+    def test_search_type_filter(self):
+        write(self.wiki, "patents/EP1.md", node(
+            "type: Patent\ntitle: Amorphous ribbon\n",
+            "# Amorphous ribbon\nRibbon of amorphous metal.\n"))
+        resp = self.request("tools/call", {
+            "name": "okf_search",
+            "arguments": {"wiki": "wiki", "query": "amorphous"},
+        })
+        self.assertFalse(resp["result"]["isError"])
+        hits = json.loads(resp["result"]["content"][0]["text"])
+        nodes = {h["node"] for h in hits}
+        self.assertIn("a.md", nodes)
+        self.assertIn("patents/EP1.md", nodes)
+
+        resp_patent = self.request("tools/call", {
+            "name": "okf_search",
+            "arguments": {"wiki": "wiki", "query": "amorphous", "type": "patent"},
+        })
+        hits_patent = json.loads(resp_patent["result"]["content"][0]["text"])
+        self.assertEqual([h["node"] for h in hits_patent], ["patents/EP1.md"])
+
+        resp_both = self.request("tools/call", {
+            "name": "okf_search",
+            "arguments": {"wiki": "wiki", "query": "amorphous", "type": "note,patent"},
+        })
+        hits_both = json.loads(resp_both["result"]["content"][0]["text"])
+        self.assertEqual({h["node"] for h in hits_both}, {"a.md", "patents/EP1.md"})
+
+    def test_search_scope_filter(self):
+        write(self.wiki, "tax.md", node(
+            "type: Note\nscope: taxonomy\ntitle: Quench Taxonomy\n",
+            "# Quench Taxonomy\nRapid quenching methods.\n"))
+        write(self.wiki, "gotcha.md", node(
+            "type: Note\nscope: gotchas\ntitle: Quench Gotcha\n",
+            "# Quench Gotcha\nThermal stress during rapid quench.\n"))
+
+        resp = self.request("tools/call", {
+            "name": "okf_search",
+            "arguments": {"wiki": "wiki", "query": "quench", "scope": "gotchas"},
+        })
+        self.assertFalse(resp["result"]["isError"])
+        hits = json.loads(resp["result"]["content"][0]["text"])
+        self.assertEqual([h["node"] for h in hits], ["gotcha.md"])
+
+    def test_search_include_admin(self):
+        write(self.wiki, "BUILDLOG.md", node(
+            "type: Note\ntitle: Buildlog\n",
+            "# Buildlog\nContains amorphous experiments.\n"))
+        resp_no_admin = self.request("tools/call", {
+            "name": "okf_search",
+            "arguments": {"wiki": "wiki", "query": "amorphous"},
+        })
+        hits_no_admin = json.loads(resp_no_admin["result"]["content"][0]["text"])
+        nodes_no_admin = {h["node"] for h in hits_no_admin}
+        self.assertNotIn("BUILDLOG.md", nodes_no_admin)
+
+        resp_admin = self.request("tools/call", {
+            "name": "okf_search",
+            "arguments": {"wiki": "wiki", "query": "amorphous", "include_admin": True},
+        })
+        hits_admin = json.loads(resp_admin["result"]["content"][0]["text"])
+        nodes_admin = {h["node"] for h in hits_admin}
+        self.assertIn("BUILDLOG.md", nodes_admin)
+
+    def test_search_expand_inline(self):
+        write(self.wiki, "synonyms.json", json.dumps({"groups": [["vitreous", "glassy"]]}))
+        write(self.wiki, "glassy.md", node(
+            "type: Note\ntitle: Glassy state\n",
+            "# Glassy state\nA disordered solid phase.\n"))
+
+        resp_no_expand = self.request("tools/call", {
+            "name": "okf_search",
+            "arguments": {"wiki": "wiki", "query": "vitreous"},
+        })
+        hits_no_expand = json.loads(resp_no_expand["result"]["content"][0]["text"])
+        self.assertEqual(hits_no_expand, [])
+
+        resp_expand = self.request("tools/call", {
+            "name": "okf_search",
+            "arguments": {"wiki": "wiki", "query": "vitreous", "expand": True},
+        })
+        self.assertFalse(resp_expand["result"]["isError"])
+        hits_expand = json.loads(resp_expand["result"]["content"][0]["text"])
+        self.assertEqual([h["node"] for h in hits_expand], ["glassy.md"])
+
+        # The retired expand_synonyms alias is not special-cased: it is an
+        # unknown argument now and must not trigger expansion.
+        resp_legacy = self.request("tools/call", {
+            "name": "okf_search",
+            "arguments": {"wiki": "wiki", "query": "vitreous", "expand_synonyms": True},
+        })
+        self.assertFalse(resp_legacy["result"]["isError"])
+        hits_legacy = json.loads(resp_legacy["result"]["content"][0]["text"])
+        self.assertEqual(hits_legacy, [])
+
+        listed = self.request("tools/list")
+        schemas = {tool["name"]: tool["inputSchema"]["properties"]
+                   for tool in listed["result"]["tools"]}
+        for tool_name in ("okf_search", "okf_context"):
+            self.assertIn("expand", schemas[tool_name])
+            self.assertNotIn("expand_synonyms", schemas[tool_name])
+
+    def test_search_hits_include_breakdown(self):
+        resp = self.request("tools/call", {
+            "name": "okf_search",
+            "arguments": {"wiki": "wiki", "query": "amorphous"},
+        })
+        self.assertFalse(resp["result"]["isError"])
+        hits = json.loads(resp["result"]["content"][0]["text"])
+        self.assertTrue(len(hits) > 0)
+        hit = hits[0]
+        self.assertIn("breakdown", hit)
+        bd = hit["breakdown"]
+        self.assertEqual(bd["total"], hit["score"])
+        self.assertIn("gate", bd)
+        self.assertIn("rule", bd["gate"])
+
 
 if __name__ == "__main__":
     unittest.main()

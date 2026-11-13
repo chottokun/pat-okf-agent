@@ -95,7 +95,7 @@ uv run okf search <wiki> "<query>" --backend sqlite
 # Auto: Pattern B above 500 concepts
 uv run okf search <wiki> "<query>" --backend auto
 
-# Synonym expansion (bounded; original query remains first)
+# Synonym expansion: inline 0.5x auxiliary terms (no variant merge; original query dominates)
 uv run okf search <wiki> "<query>" --expand --json
 
 # Optional Pattern C: Qdrant + HTTP/Gemma embeddings
@@ -111,6 +111,15 @@ It needs `QDRANT_URL` and an `OKF_EMBEDDING_*` endpoint, or explicit CLI flags.
 The Qdrant collection is derived data: rebuild it with `okf qdrant <wiki>` or
 `--force`; never edit it by hand.  If infrastructure is unavailable, fall back
 to `--backend local`.
+
+### Search scoring, filters and query craft
+
+- Scores weight where a term matches, never what a note is: per term title 20 / tags 15 / description 10 / headings+lead 5 / body 1 per occurrence; whole-query phrase bonus title +50 / description +20 / headings+lead +15; headings+lead and body totals are capped at 10.
+- Match factors: exact x1.0, stem x0.8, wildcard prefix x0.7, synonym/correction auxiliary terms x0.5; deprecated notes x0.3.
+- Filters are facts, not weights: `--type`, `--scope`, `--no-admin` (admin notes are excluded by default). If patent notes bury the concept note, re-query with `--type concept` instead of fighting the ranking.
+- Operators: uppercase `AND` / `OR` (`AND` is the default gate for ASCII queries: every term must match somewhere), prefix wildcard `term*`.
+- Zero hits on an ASCII query trigger a vocabulary typo fallback: `--json` hits then carry `is_fallback` and `query_corrections`; prefer re-querying with the corrected term for a clean ranking.
+- Read the breakdown before re-querying: `--json` hits carry `breakdown` (per-term kind/field/points, phrase, field subtotals, adjustments, gate matched/missed, total == score). The missed list and the field points show why a note ranked where it did; change the query or the filter, not your trust in the corpus. `eval-synonyms` failure rows carry `failure_detail` with the same breakdowns.
 
 ### Synonym sync and quality gate
 

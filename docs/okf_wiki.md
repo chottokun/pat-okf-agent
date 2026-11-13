@@ -597,7 +597,7 @@ curl -s -H "Authorization: Bearer $OKF_MCP_TOKEN" \
 - `okf_search` / `okf_context` は `backend=qdrant` と
   `embedding_url` / `qdrant_url` / `embedding_style` などを受け取れます。
   秘匿値は引数より `QDRANT_API_KEY` / `OKF_EMBEDDING_API_KEY` の
-  環境変数を推奨します。`expand_synonyms=true` は
+  環境変数を推奨します。`expand=true` は
   `<wiki>/synonyms.json` を使います。
 - ツール失敗は JSON-RPC 自体を壊さず `isError: true` の content で返す。
 - HTTP は単発 SSE のみで、複数セッションの双方向 SSE、OAuth、監査ログ、
