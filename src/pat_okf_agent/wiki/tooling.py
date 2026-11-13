@@ -96,11 +96,6 @@ TOOL_SPECS: list[dict[str, Any]] = [
                     ),
                     "default": False,
                 },
-                "expand_synonyms": {
-                    "type": "boolean",
-                    "description": "Use <wiki>/synonyms.json query aliases.",
-                    "default": False,
-                },
                 "include_admin": {
                     "type": "boolean",
                     "description": (
@@ -157,8 +152,14 @@ TOOL_SPECS: list[dict[str, Any]] = [
                     "type": "string", "enum": ["openai", "gemini"],
                     "default": "openai",
                 },
-                "expand_synonyms": {
-                    "type": "boolean", "default": False,
+                "expand": {
+                    "type": "boolean",
+                    "description": (
+                        "Expand the seed search with <wiki>/synonyms.json "
+                        "aliases as inline 0.5x auxiliary terms "
+                        "(same as okf context --expand)."
+                    ),
+                    "default": False,
                 },
                 "phases": {
                     "type": "boolean",
@@ -454,10 +455,7 @@ def _tool_backend(arguments: dict[str, Any], wiki: Path, *, root: Path):
     else:
         base = get_backend(
             backend, wiki, db_path=db_path)
-    expand = (
-        _boolean(arguments, "expand", False)
-        or _boolean(arguments, "expand_synonyms", False)
-    )
+    expand = _boolean(arguments, "expand", False)
     if expand:
         from .synonyms import ExpandedSearchBackend, SynonymIndex
         path = wiki / "synonyms.json"

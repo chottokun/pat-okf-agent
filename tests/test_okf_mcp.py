@@ -203,7 +203,7 @@ class McpServerTests(unittest.TestCase):
         nodes_admin = {h["node"] for h in hits_admin}
         self.assertIn("BUILDLOG.md", nodes_admin)
 
-    def test_search_expand_synonyms_inline(self):
+    def test_search_expand_inline(self):
         write(self.wiki, "synonyms.json", json.dumps({"groups": [["vitreous", "glassy"]]}))
         write(self.wiki, "glassy.md", node(
             "type: Note\ntitle: Glassy state\n",
@@ -224,13 +224,22 @@ class McpServerTests(unittest.TestCase):
         hits_expand = json.loads(resp_expand["result"]["content"][0]["text"])
         self.assertEqual([h["node"] for h in hits_expand], ["glassy.md"])
 
+        # The retired expand_synonyms alias is not special-cased: it is an
+        # unknown argument now and must not trigger expansion.
         resp_legacy = self.request("tools/call", {
             "name": "okf_search",
             "arguments": {"wiki": "wiki", "query": "vitreous", "expand_synonyms": True},
         })
         self.assertFalse(resp_legacy["result"]["isError"])
         hits_legacy = json.loads(resp_legacy["result"]["content"][0]["text"])
-        self.assertEqual([h["node"] for h in hits_legacy], ["glassy.md"])
+        self.assertEqual(hits_legacy, [])
+
+        listed = self.request("tools/list")
+        schemas = {tool["name"]: tool["inputSchema"]["properties"]
+                   for tool in listed["result"]["tools"]}
+        for tool_name in ("okf_search", "okf_context"):
+            self.assertIn("expand", schemas[tool_name])
+            self.assertNotIn("expand_synonyms", schemas[tool_name])
 
     def test_search_hits_include_breakdown(self):
         resp = self.request("tools/call", {
