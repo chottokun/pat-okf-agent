@@ -57,20 +57,28 @@ uv run okf verify-source arXiv:2401.12345 --expect-author "Smith" --json
 uv run okf verify-source "datasheet:https://example.com/aln-datasheet.pdf" \
   --issued 2024-05-01 \
   --json
+# For a KB that keeps evidence internally (ops-record / paper-centric KBs),
+# direct snapshots into the KB's own evidence dir:
+#   uv run okf verify-source <target> --cache-dir <wiki>/evidence --json
+# (creates <wiki>/evidence/snapshots/, <wiki>/evidence/arxiv/, ... - the layout
+# that validate --evidence-dir <wiki>/evidence later audits)
 
 # Record orphan / rejection reason for an unadopted snapshot
 uv run okf verify-source "https://example.com/unadopted.html" \
   --orphan-reason "数値なし（定性的記述のみ）のため不採用"
 
 # Audit evidence snapshots and provenance consistency during batch completion
-uv run okf validate <wiki> --strict-provenance --check-evidence --json
+# (--evidence-dir names the target KB's own evidence dir; without it the audit
+# silently checks the default shared cache data/external/source_verify -
+# see okf-design-conventions section 3. Shared-cache KBs pass that path explicitly.)
+uv run okf validate <wiki> --strict-provenance --check-evidence --evidence-dir <wiki>/evidence --json
 ```
 
 ### Exit Codes
 
-- `0` (`verified`): Source confirmed and claims matched. Agent inspects `metadata.publisher` and records `okf_source` in the note.
+- `0` (`verified`): Source confirmed and claims matched. Agent inspects `metadata.publisher` and records the resulting `okf_source` string in the note's YAML frontmatter `sources:` list.
 - `1` (`not_found` / `mismatch` / `unverified`): Verification failed (missing ID, title/author/year mismatch, paywalled, or claim not in abstract/body). **Do not cite this source**.
-- `2` (`error`): Rate limit, network error, or invalid arguments. Pause and wait before retrying.
+- `2` (`error`): Rate limit, network error, or invalid arguments. Pause and wait before retrying. Exception: during a batch, kb-batch-discipline's Hard Constraint 4 governs - a persistent HTTP 429 or ledger HTTP 403 (exit 2) stops network calls immediately and closes the batch partially. Invalid-argument errors are never retried; fix the arguments.
 
 ## Agent Policy Guidelines
 
@@ -78,4 +86,4 @@ uv run okf validate <wiki> --strict-provenance --check-evidence --json
 2. **Block-Local Grounding**: Ground claims in note sections. When multiple sources agree, cite them together. When values diverge, record both with measurement conditions in a note footnote.
 3. **Tier-4 Attribution**: For papers without DOI/arXiv, record `web:<url> [issued=YYYY-MM-DD] retrieved=YYYY-MM-DD via=web` and explicitly name the publisher or bulletin in the note text so readers can assess authority.
 4. **Recording Rejection Reasons (Orphan Triage)**: When a fetched snapshot is not adopted into any note's `sources:` (e.g. because of qualitative-only descriptions or lack of quantitative figures), record an objective `orphan_reason` in `.meta.json` using `okf verify-source <url> --orphan-reason "<reason>"`. This prevents unexplained orphan warnings (`[E2]`) during `okf validate --check-evidence`.
-5. **Evidence Audit Gate**: At the end of any knowledge base update or ingestion batch, run `okf validate <wiki> --strict-provenance --check-evidence` as the completion gate to ensure all cited web sources have active snapshots (`[E1]`) and all unreferenced snapshots are documented (`[E2]`). For multi-concept batches, orchestrate staging, evidence gates, and staged delegation via `.agents/skills/kb-batch-discipline/SKILL.md`.
+5. **Evidence Audit Gate**: At the end of any knowledge base update or ingestion batch, run `okf validate <wiki> --strict-provenance --check-evidence --evidence-dir <wiki>/evidence` as the completion gate to ensure all cited web sources have active snapshots (`[E1]`) and all unreferenced snapshots are documented (`[E2]`). The `--evidence-dir` must name the target KB's own evidence dir (okf-design-conventions sections 3 and 7); for a shared-cache KB pass its cache path explicitly (`--evidence-dir data/external/source_verify` from the repository root). Omitting it silently audits the CWD-default cache instead of the KB's evidence. For multi-concept batches, orchestrate staging, evidence gates, and staged delegation via `.agents/skills/kb-batch-discipline/SKILL.md`.

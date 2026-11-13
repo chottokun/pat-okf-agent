@@ -14,13 +14,13 @@ trigger_conditions:
 # Patent to Wiki Ingestion
 
 Use this skill when patent data must become durable OKF knowledge. It composes
-the **EPO Patent Fetch** skill with **OKF Wiki Operations**; never duplicate
+the bundled `okf` CLI (`okf ingest-epo`) with **OKF Wiki Operations**; never duplicate
 their low-level logic.
 
 ## Preconditions
 
 - Run commands from the repository root.
-- Use the bundled `epo`/`okf` CLI; an external EPO skill is optional.
+- Use the bundled `okf` CLI.
 - The target wiki already has `index.md`, or run:
 
 ```bash
@@ -89,13 +89,14 @@ Then run:
 ```bash
 uv run okf validate <wiki>
 uv run okf index <wiki>
+uv run okf index <wiki> --check
 uv run okf context <wiki> "<title or alloy>" \
   --max-nodes 5 --json
 ```
 
 Check that:
 
-- `broken_links` is zero and no provenance warnings (`[P1]`–`[P8]`) are reported
+- `broken_links` is zero and no provenance warnings (`[P1]`–`[P9]`) are reported
 - the new patent is reachable from the expected workflow or family
 - incompatible Gotchas nodes are pruned rather than used
 - the context token count stays within the requested budget
@@ -124,7 +125,7 @@ uv run okf stats <wiki> --json
 
 | Symptom | Action |
 | --- | --- |
-| `uncached` offline | fetch only that publication with the EPO skill |
+| `uncached` offline | rerun `okf ingest-epo` without `--offline` for that publication |
 | `claims unavailable` | try EPS for EP publications; otherwise record warning |
 | `family unavailable` | keep the patent node; do not invent members |
 | broken family link | create the stub or remove the link; validate again |

@@ -23,8 +23,10 @@ trigger_conditions:
 
 Use this skill whenever selecting next-batch concept candidates or running, supervising, and auditing a multi-concept knowledge collection batch (EPO patents, Crossref/arXiv papers, or web primary sources) across an OKF wiki.
 
+For paper-centric KBs (papers as the primary sources, e.g. `kb-ai-research`), also apply the **Paper-Centric Batch Profile** section below; it operationalizes the Phase-2 paper target in `## Closing with Evidence` for that KB type.
+
 This skill governs **candidate selection, batch orchestration, progress accounting, closing gates, reflection handoff, and staged delegation**. Delegate low-level mechanics to existing skills instead of duplicating them:
-- Note structure, frontmatter, `[P1]`–`[P8]` provenance rules, and indexing → `.agents/skills/okf-wiki/SKILL.md`
+- Note structure, frontmatter, `[P1]`–`[P9]` provenance rules, and indexing → `.agents/skills/okf-wiki/SKILL.md`
 - Single-publication / CQL EPO ingestion → `.agents/skills/patent-to-wiki/SKILL.md`
 - DOI, arXiv, and web snapshot verification + `--orphan-reason` → `.agents/skills/source-verify/SKILL.md`
 - Settled design conventions (value domains, freshness, evidence layout, tag tiers, version grounding, cross-KB references, gate invocation forms) → `.agents/skills/okf-design-conventions/SKILL.md` — read at batch start.
@@ -35,7 +37,7 @@ Whenever proposing or selecting new concept candidates for a batch of $N$ concep
 
 1. **Read-Only Inventory & Primary-Source Scan**:
    - Read `<wiki>/concepts/index.md` (all existing slugs/titles), `<wiki>/SUMMARY.md` (domain boundary), `<wiki>/synonyms.json` (if present), and recent `<work-dir>/report.md` files (including any unmerged staging KBs under `.kb-*-work/*/`).
-   - Scan existing `concepts/*.md` (`## Taxonomy`, `## Workflow / Implementation`, `## Synergistic Combinations`) and verified caches (`data/external/source_verify/`) for uncollected topics referenced in patents, paper abstracts, or vendor datasheets. If any listed input is absent from the workspace, name it in the proposal header (`Inputs missing: <path>`); never infer its contents.
+   - Scan existing `concepts/*.md` (`## Taxonomy`, `## Workflow / Implementation`, `## Synergistic Combinations`) and verified caches (`data/external/source_verify/` for the shared-cache semiconductor KB, or the target KB's own `<wiki>/evidence/`) for uncollected topics referenced in patents, paper abstracts, or vendor datasheets. If any listed input is absent from the workspace, name it in the proposal header (`Inputs missing: <path>`); never infer its contents.
    - Run deterministic mechanical inspection once the draft proposal is assembled: `uv run okf candidate-check <wiki> --proposal <work-dir>/proposal.md`. Read returned relations (the tool returns neutral relations only, without verdict or weights; use `--fail-on <kind>` if asserting) and ensure verbatim quoted mentions resolve.
    - **Gap-Axis Statement**: Before listing candidates, state in ≤ 3 sentences which gap axis or axes the pool follows (e.g. cooling devices, packaging/substrates, TIMs, composites), the in-KB evidence density behind that choice, and the strongest competing axis not chosen. The pool may span axes; never present it as the only valid gap analysis.
 2. **Five Mandatory Evaluation Criteria `(a)`–`(e)`**:
@@ -87,13 +89,14 @@ Every batch run must establish an isolated, resumable workspace before making an
 
 A batch — or an individual concept within it — closes as `done` **only with objective evidence recorded in `<work-dir>/report.md`**:
 
-1. **Required Gate Outputs**: Paste the exact command and output for all three end-of-batch gates into `report.md`:
+1. **Required Gate Outputs**: Paste the exact command and output for all four end-of-batch gate commands (three gate types: `validate`, `index` + `index --check`, `stats`) into `report.md`:
    ```bash
-   uv run okf validate <wiki> --strict-provenance --check-evidence
+   uv run okf validate <wiki> --strict-provenance --check-evidence --evidence-dir <wiki>/evidence
    uv run okf index <wiki>
    uv run okf index <wiki> --check
    uv run okf stats <wiki> --json
    ```
+   - The `--evidence-dir` is always explicit (okf-design-conventions sections 3 and 7): use the target KB's own evidence dir. For a KB whose evidence lives in the shared repo cache (the semiconductor patent-type KB), pass that cache path explicitly instead - `--evidence-dir data/external/source_verify`, run from the repository root. Never rely on the CWD-relative default.
    - Gate pass criteria: `validate` exits `0` with `0` errors, `0` warnings, `0` missing cited snapshots (`[E1]`), and `0` unexplained orphan snapshots (`[E2]`); `index --check` exits `0`; `stats` reports `"broken_links": 0` and `"undeclared": 0`.
    - Index gate exception: For purely additive enrichment batches on existing notes (Phases 2–3), `uv run okf index <wiki> --check` alone is an acceptable index gate; running a full `uv run okf index <wiki>` write is required when notes are added, removed, or retitled.
 2. **Orphan & Off-Topic Hygiene Before Closing**:
@@ -102,11 +105,21 @@ A batch — or an individual concept within it — closes as `done` **only with 
 3. **Per-Concept Source Targets & Floors**:
    Each concept closes as `done` only when it reaches the batch target:
    - Patents (Phase 1): Target 3–5 patents.
-   - Papers (Phase 2): Target 3 peer-reviewed papers (with $\ge 1$ quantitative claim where abstracts exist); 2 acceptable only when literature is genuinely sparse, explicitly justified in `problems:` and `## Reflection`.
+   - Papers (Phase 2): Target 3 peer-reviewed papers (with $\ge 1$ quantitative claim where abstracts exist); 2 acceptable only when literature is genuinely sparse, explicitly justified in `problems:` and `## Reflection`. For paper-centric KBs, the Paper-Centric Batch Profile below defines the composition and grounding for this target.
    - Web (Phase 3): Target 2 distinct-vendor primary sources with quantitative specs; 1 acceptable only when vendor coverage is sparse, explicitly justified in `problems:` and `## Reflection`.
 4. **Partial Close Rule**:
    - Conclude the status table with explicit totals: `**Totals: X done / Y partial / Z failed.**`
    - If a concept hits rate limits, lacks domain hits, or fails verification, leave it marked `partial` or `failed` (open) with the concrete reason (`rate_limit`, `sparse_literature`, `http_403`, `validation_error`). **Never** pad a concept with off-topic sources, invent citations from memory, or round a partial result up to `done`.
+
+## Paper-Centric Batch Profile
+
+For paper-centric KBs (e.g. `kb-ai-research`), this profile operationalizes the Phase-2 paper target. The full profile text is the companion file `.agents/skills/kb-batch-discipline/paper-centric-profile.md` in this skill folder - required reading before running such a batch. The essentials:
+
+- **Composition**: 3 papers per concept (1 defining original + 2 follow-up / rival / application); web sources only from official repositories / official technical blogs (guideline 0-2). Never pad a concept with unrelated papers to reach the count.
+- **Two-stage grounding**: the abstract confirms identity and adoption (stage 1); the full text grounds 手法 / 結果 / 限界と前提 (stage 2), acquired via route A (arXiv HTML/PDF), route B (proceedings as a web source with `retrieved=`), or route C (official repos/docs, release/commit pinned when a claim depends on it). Numbers are written only with their conditions (model / hardware / dataset / baseline); a number without conditions is a de-facto `[P4]` violation.
+- **Note form**: 7 sections （問い / 主張 / 手法 / 結果 / 限界と前提 / 関連概念 / 履歴メモ）; exactly one primary Tier A `strand:` tag; the grounding route and depth are declared in 履歴メモ - a mismatch between the declaration and reality is the heaviest audit return reason.
+- **Links**: link only to notes that exist at write time; not-yet-created concepts are bare slug text; convert slug mentions to links in the end-of-stage link-conversion pass.
+- **Evidence**: direct `verify-source` output with `--cache-dir <wiki>/evidence`; gates always pass `--evidence-dir <wiki>/evidence` explicitly (okf-design-conventions sections 3 and 7); pass requires `referenced` equal to the distinct arXiv snapshots across `sources:` and `missing` 0.
 
 ## Reflection & Cross-Batch Handoff
 
@@ -144,7 +157,7 @@ When a batch discovers a reusable workflow rule or failure guard that should be 
 
 ## Staged Delegation & Audit Protocol
 
-Delegation between the **Orchestrator/Reviewer** (e.g. Shana) and the **Batch Worker** (e.g. OpenCode) progresses through three stages. The evidence and reflection rules in §§2.3–2.4 are the precondition for every stage.
+Delegation between the **Orchestrator/Reviewer** (e.g. Shana) and the **Batch Worker** (e.g. OpenCode) progresses through three stages. The evidence and reflection rules in `## Closing with Evidence (No Silent Drops)` and `## Reflection & Cross-Batch Handoff` are the precondition for every stage.
 
 | Stage | When Used | Worker Responsibility | Reviewer / Orchestrator Verification |
 | :--- | :--- | :--- | :--- |
@@ -160,7 +173,7 @@ Delegation between the **Orchestrator/Reviewer** (e.g. Shana) and the **Batch Wo
 ````markdown
 ### Audit Summary (<Reviewer>, YYYY-MM-DD)
 - **Stage**: Stage 2 (Sample Audit) | Stage 3 (Anomaly Audit)
-- **Gate check**: `okf validate --strict-provenance --check-evidence` exit 0 (missing=0, unexplained_orphans=0); `okf index --check` exit 0
+- **Gate check**: `okf validate --strict-provenance --check-evidence --evidence-dir <wiki>/evidence` exit 0 (missing=0, unexplained_orphans=0); `okf index --check` exit 0
 - **Sampled concepts & sources**:
   1. `<concept>` (`<source_id_or_url>`): <independent DOI/snapshot/.extracted.txt verification result — pass/fail>
   2. `<concept>` (`<source_id_or_url>`): <pass/fail>
@@ -173,7 +186,7 @@ Delegation between the **Orchestrator/Reviewer** (e.g. Shana) and the **Batch Wo
 Every batch prompt and worker execution must enforce these five hard boundaries:
 
 1. **Zero `.secrets/` or Credential Access**: Never read, print, or modify `.secrets/`, `.env`, or token caches. Never place internal absolute filesystem paths (such as home or root paths) in tracked repository files (`scripts/check_public_repo.py`).
-2. **Strict File-Scope Lock**: A batch worker may write only to (a) its `<work-dir>/`, (b) the explicitly assigned concept/patent Markdown files, `data/external/` caches via `okf` CLI, (c) generated `index*.md` files updated by running `okf index`, and (d) optional skill-improvement proposals under `.agents/skills/.proposals/<skill-slug>.md`. Never modify `src/`, `tests/`, live skill files (`.agents/skills/*/SKILL.md`), or backup KB directories. Within an assigned note, updating stale internal narrative counts (e.g. `"上記 2 件"` → `"上記 3 件"` after adding a third source) to maintain consistency with added sources is allowed and is NOT a scope violation; record any such fix in the status line (`problems: ...`) and in `## Reflection` (`Mid-batch corrections`).
+2. **Strict File-Scope Lock**: A batch worker may write only to (a) its `<work-dir>/`, (b) the explicitly assigned concept/patent Markdown files, evidence caches via the `okf` CLI (`data/external/` for shared-cache KBs, or the KB-internal `<wiki>/evidence/`), files the `okf` CLI itself generates or appends (`patents/<PUB>.md` nodes, family stubs, and `<wiki>/log.md` via `okf ingest-epo`), (c) generated `index*.md` files updated by running `okf index`, and (d) optional skill-improvement proposals under `.agents/skills/.proposals/<skill-slug>.md`. Never modify `src/`, `tests/`, live skill files (`.agents/skills/*/SKILL.md`), or backup KB directories. Within an assigned note, updating stale internal narrative counts (e.g. `"上記 2 件"` → `"上記 3 件"` after adding a third source) to maintain consistency with added sources is allowed and is NOT a scope violation; record any such fix in the status line (`problems: ...`) and in `## Reflection` (`Mid-batch corrections`).
 3. **No `git` Commands by Batch Workers**: Workers must not run `git add`, `git commit`, `git checkout`, `git reset`, or `git clean`. Repository git operations and KB backup snapshots are performed solely by the orchestrator/owner.
 4. **Rate-Limit Politeness & Fail-Safe Stop**: Always use `okf ingest-epo` / `okf verify-source` rate limiters (3.0 s EPO/arXiv, 1.5–2.5 s Crossref/Web) and URL-encode query parameters. If an API returns persistent HTTP 429 or ledger HTTP 403 (`exit 2`), stop network calls immediately and close the batch partially.
 5. **See-Before-Cite & Material-Class Check**: Cite only identifiers resolved via ledger/snapshot. When a ledger record has no abstract, restrict body claims to what the title supports. Confirm exact material/device class (e.g. Cu sintering vs. Ag sintering; chip TIM vs. building/battery PCM) before adopting a source.
