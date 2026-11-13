@@ -1,6 +1,6 @@
 ---
 name: OKF Design Conventions
-description: Apply the settled OKF design conventions — controlled value domains, freshness by verified_at and deprecation, KB-internal evidence, two-tier tags, version grounding, cross-KB references, and correct gate invocations — when designing a KB, adding controlled values, or running validation gates.
+description: Apply the settled OKF design conventions — controlled value domains, freshness by verified_at and deprecation, KB-internal evidence, two-tier tags, version grounding, cross-KB references, correct gate invocations, and skill file layout — when designing a KB, adding controlled values, or running validation gates.
 trigger_conditions:
   - design conventions
   - 設計規約
@@ -109,6 +109,20 @@ snapshots).
   orphans; `index --check` exits 0.
 - Over the Drive mount, run gates detached and poll the log (cold validate
   takes ~100–350 s over the mount vs <1 s local).
+
+## 8. Skill File Layout (SKILL.md summary, detail in references/)
+
+- A skill's SKILL.md carries the operative summary and pointers; detailed
+  profiles and other long reference text live in the skill folder's
+  `references/` subdirectory, templates in `templates/`. Readers enter via
+  SKILL.md and follow its pointers.
+- Where a test enforces a line cap on SKILL.md (kb-batch-discipline:
+  ≤ 200 lines, `tests/test_okf_candidate.py` U4), the split is strict:
+  never raise the cap or compress substance away to fit detail in — move
+  the detail to `references/` instead.
+- Files under `references/` / `templates/` are not skills: skill discovery
+  reads SKILL.md files only, so the split never changes the skill count
+  (first applied: the paper-centric profile of kb-batch-discipline, PR #24).
 
 ## Verification
 

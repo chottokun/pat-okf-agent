@@ -113,7 +113,7 @@ A batch — or an individual concept within it — closes as `done` **only with 
 
 ## Paper-Centric Batch Profile
 
-For paper-centric KBs (e.g. `kb-ai-research`), this profile operationalizes the Phase-2 paper target. The full profile text is the companion file `.agents/skills/kb-batch-discipline/paper-centric-profile.md` in this skill folder - required reading before running such a batch. The essentials:
+For paper-centric KBs (e.g. `kb-ai-research`), this profile operationalizes the Phase-2 paper target. The full profile text is the reference file `.agents/skills/kb-batch-discipline/references/paper-centric-profile.md` in this skill folder - required reading before running such a batch. The essentials:
 
 - **Composition**: 3 papers per concept (1 defining original + 2 follow-up / rival / application); web sources only from official repositories / official technical blogs (guideline 0-2). Never pad a concept with unrelated papers to reach the count.
 - **Two-stage grounding**: the abstract confirms identity and adoption (stage 1); the full text grounds 手法 / 結果 / 限界と前提 (stage 2), acquired via route A (arXiv HTML/PDF), route B (proceedings as a web source with `retrieved=`), or route C (official repos/docs, release/commit pinned when a claim depends on it). Numbers are written only with their conditions (model / hardware / dataset / baseline); a number without conditions is a de-facto `[P4]` violation.
