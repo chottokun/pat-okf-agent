@@ -357,6 +357,21 @@ class ValidationTests(unittest.TestCase):
         self.assertTrue(report.ok)  # exit 0
         self.assertTrue(any("a.md: [P7] unknown source kind: blog" in w for w in report.warnings))
 
+    def test_provenance_ops_record_source_no_p6_no_p7(self):
+        write(self.root, "index.md", "# Index\n")
+        write(self.root, "ops.md", node(
+            "type: Concept\n"
+            "basis: ops-record\n"
+            "sources: ['ops-record:plans/plan.md#sec-1 snapshot=tools-md-voicevox']\n",
+            "# Ops Note\n",
+        ))
+        report = validate_wiki(self.root)
+        self.assertTrue(report.ok)
+        p6_warnings = [w for w in report.warnings if "[P6]" in w]
+        p7_warnings = [w for w in report.warnings if "[P7]" in w]
+        self.assertEqual(p6_warnings, [])
+        self.assertEqual(p7_warnings, [])
+
     def test_provenance_p8_volatile_sources_age_check_with_injected_today(self):
         write(self.root, "index.md", "# Index\n")
         # volatile source >= 3 years (1095 days) old
@@ -580,6 +595,39 @@ class TestEvidenceValidation(unittest.TestCase):
             body_path.write_bytes(body)
         return key, meta_path, body_path
 
+    def _create_ops_snapshot(
+        self,
+        key: str,
+        *,
+        body: bytes | None = b"sample ops record content",
+        sha256: str | None = None,
+        meta_extra: dict | None = None,
+        ext: str = "md",
+    ) -> tuple[str, Path, Path | None]:
+        import hashlib
+        import json
+
+        meta_path = self.snapshots_dir / f"{key}.meta.json"
+        body_path = None
+        if body is not None:
+            body_path = self.snapshots_dir / f"{key}.{ext}"
+            body_path.write_bytes(body)
+
+        if sha256 is None and body is not None:
+            digest = hashlib.sha256(body).hexdigest()
+            sha256 = f"sha256:{digest}"
+
+        meta_data: dict[str, Any] = {
+            "title": key,
+            "recorded_at": "2026-11-13",
+        }
+        if sha256 is not None:
+            meta_data["sha256"] = sha256
+        if meta_extra:
+            meta_data.update(meta_extra)
+        meta_path.write_text(json.dumps(meta_data, indent=2), encoding="utf-8")
+        return key, meta_path, body_path
+
     def test_default_check_evidence_is_false_and_backward_compatible(self):
         write(self.root, "concepts/aln.md", node(
             "type: Concept\n"
@@ -784,6 +832,235 @@ class TestEvidenceValidation(unittest.TestCase):
         self.assertTrue(any("stray_1234567890abcdef.pdf" in w for w in e3_warnings))
         self.assertTrue(any("orphan snapshot metadata without body file" in w for w in e3_warnings))
         self.assertEqual(report.evidence.tombstone_count, 1)
+
+    def test_ops_record_referenced_snapshot_present(self):
+        key = "tools-md-voicevox"
+        self._create_ops_snapshot(key)
+
+        write(self.root, "concepts/voicevox.md", node(
+            "type: Concept\n"
+            "title: 'Voicevox Tools'\n"
+            "basis: ops-record\n"
+            "sources: ['ops-record:plans/plan.md#sec-1 snapshot=tools-md-voicevox']\n",
+            "# Voicevox\n",
+        ))
+        report = validate_wiki(
+            self.root,
+            check_orphans=False,
+            check_evidence=True,
+            evidence_dir=self.evidence_dir,
+            strict_provenance=True,
+        )
+        self.assertTrue(report.ok)
+        self.assertEqual(report.errors, [])
+        self.assertEqual(report.warnings, [])
+        self.assertIsNotNone(report.evidence)
+        self.assertEqual(report.evidence.referenced_count, 1)
+        self.assertEqual(report.evidence.missing_count, 0)
+        self.assertEqual(report.evidence.orphan_count, 0)
+
+    def test_ops_record_missing_metadata_warn_or_error(self):
+        write(self.root, "concepts/voicevox.md", node(
+            "type: Concept\n"
+            "title: 'Voicevox Tools'\n"
+            "basis: ops-record\n"
+            "sources: ['ops-record:plans/plan.md snapshot=missing-key']\n",
+            "# Voicevox\n",
+        ))
+        # Normal triage: WARN (exit 0)
+        report_warn = validate_wiki(
+            self.root,
+            check_evidence=True,
+            evidence_dir=self.evidence_dir,
+            strict_provenance=False,
+        )
+        self.assertTrue(report_warn.ok)
+        self.assertEqual(len(report_warn.errors), 0)
+        self.assertTrue(any("[E1]" in w and "missing snapshot metadata" in w and "ops-record:plans/plan.md" in w for w in report_warn.warnings))
+        self.assertEqual(report_warn.evidence.missing_count, 1)
+        missing_entry = report_warn.evidence.missing[0]
+        self.assertEqual(missing_entry["reason"], "missing_metadata")
+        self.assertEqual(missing_entry["key"], "missing-key")
+
+        # Strict provenance: ERROR (exit 1)
+        report_strict = validate_wiki(
+            self.root,
+            check_evidence=True,
+            evidence_dir=self.evidence_dir,
+            strict_provenance=True,
+        )
+        self.assertFalse(report_strict.ok)
+        self.assertTrue(any("[E1]" in e and "missing snapshot metadata" in e and "ops-record:plans/plan.md" in e for e in report_strict.errors))
+
+    def test_ops_record_missing_body_warn_or_error(self):
+        key = "no-body-key"
+        self._create_ops_snapshot(key, body=None, sha256="sha256:abc")
+
+        write(self.root, "concepts/voicevox.md", node(
+            "type: Concept\n"
+            "title: 'Voicevox Tools'\n"
+            "basis: ops-record\n"
+            "sources: ['ops-record:plans/plan.md snapshot=no-body-key']\n",
+            "# Voicevox\n",
+        ))
+        report = validate_wiki(
+            self.root,
+            check_evidence=True,
+            evidence_dir=self.evidence_dir,
+            strict_provenance=True,
+        )
+        self.assertFalse(report.ok)
+        self.assertTrue(any("[E1]" in e and "missing snapshot body file" in e and "ops-record:plans/plan.md" in e for e in report.errors))
+        self.assertEqual(report.evidence.missing_count, 1)
+        self.assertEqual(report.evidence.missing[0]["reason"], "missing_body")
+
+    def test_ops_record_sha256_mismatch_warn_or_error(self):
+        key = "bad-sha-key"
+        self._create_ops_snapshot(
+            key,
+            body=b"actual body content",
+            sha256="sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        )
+
+        write(self.root, "concepts/voicevox.md", node(
+            "type: Concept\n"
+            "title: 'Voicevox Tools'\n"
+            "basis: ops-record\n"
+            "sources: ['ops-record:plans/plan.md snapshot=bad-sha-key']\n",
+            "# Voicevox\n",
+        ))
+        report = validate_wiki(
+            self.root,
+            check_evidence=True,
+            evidence_dir=self.evidence_dir,
+            strict_provenance=True,
+        )
+        self.assertFalse(report.ok)
+        self.assertTrue(any("[E1]" in e and "snapshot sha256 mismatch" in e and "ops-record:plans/plan.md" in e for e in report.errors))
+        self.assertEqual(report.evidence.missing_count, 1)
+        missing_entry = report.evidence.missing[0]
+        self.assertEqual(missing_entry["reason"], "sha256_mismatch")
+        self.assertEqual(missing_entry["expected"], "sha256:0000000000000000000000000000000000000000000000000000000000000000")
+        import hashlib
+        expected_actual = f"sha256:{hashlib.sha256(b'actual body content').hexdigest()}"
+        self.assertEqual(missing_entry["actual"], expected_actual)
+
+    def test_ops_record_missing_sha256_warn_or_error(self):
+        key = "missing-sha-key"
+        self._create_ops_snapshot(
+            key,
+            body=b"actual body content",
+            meta_extra={"sha256": None},
+        )
+
+        write(self.root, "concepts/voicevox.md", node(
+            "type: Concept\n"
+            "title: 'Voicevox Tools'\n"
+            "basis: ops-record\n"
+            "sources: ['ops-record:plans/plan.md snapshot=missing-sha-key']\n",
+            "# Voicevox\n",
+        ))
+        report = validate_wiki(
+            self.root,
+            check_evidence=True,
+            evidence_dir=self.evidence_dir,
+            strict_provenance=True,
+        )
+        self.assertFalse(report.ok)
+        self.assertTrue(any("[E1]" in e and "missing sha256" in e and "ops-record:plans/plan.md" in e for e in report.errors))
+        self.assertEqual(report.evidence.missing_count, 1)
+        self.assertEqual(report.evidence.missing[0]["reason"], "missing_sha256")
+
+    def test_ops_record_tombstone_warn_or_error(self):
+        key = "tombstoned-key"
+        self._create_ops_snapshot(
+            key,
+            body=None,
+            meta_extra={"deleted_at": "2026-11-13", "orphan_reason": "removed"},
+        )
+
+        write(self.root, "concepts/voicevox.md", node(
+            "type: Concept\n"
+            "title: 'Voicevox Tools'\n"
+            "basis: ops-record\n"
+            "sources: ['ops-record:plans/plan.md snapshot=tombstoned-key']\n",
+            "# Voicevox\n",
+        ))
+        report = validate_wiki(
+            self.root,
+            check_evidence=True,
+            evidence_dir=self.evidence_dir,
+            strict_provenance=True,
+        )
+        self.assertFalse(report.ok)
+        self.assertTrue(any("[E1]" in e and "references tombstoned snapshot" in e and "ops-record:plans/plan.md" in e for e in report.errors))
+        self.assertEqual(report.evidence.missing_count, 1)
+        self.assertEqual(report.evidence.missing[0]["reason"], "tombstone_referenced")
+
+    def test_ops_record_missing_snapshot_attr_warn_or_error(self):
+        write(self.root, "concepts/voicevox.md", node(
+            "type: Concept\n"
+            "title: 'Voicevox Tools'\n"
+            "basis: ops-record\n"
+            "sources: ['ops-record:plans/plan.md#sec-1']\n",
+            "# Voicevox\n",
+        ))
+        report = validate_wiki(
+            self.root,
+            check_evidence=True,
+            evidence_dir=self.evidence_dir,
+            strict_provenance=True,
+        )
+        self.assertFalse(report.ok)
+        self.assertTrue(any("[E1]" in e and "missing snapshot attribute" in e and "ops-record:plans/plan.md#sec-1" in e for e in report.errors))
+        self.assertEqual(report.evidence.referenced_count, 0)
+        self.assertEqual(report.evidence.missing_count, 1)
+        self.assertEqual(report.evidence.missing[0]["reason"], "missing_snapshot_attr")
+
+    def test_ops_record_invalid_snapshot_key_warn_or_error(self):
+        for bad_key in ("../escape", "sub/dir", "back\\slash", ""):
+            with self.subTest(bad_key=bad_key):
+                src_str = f"ops-record:plans/plan.md snapshot={bad_key}" if bad_key else "ops-record:plans/plan.md snapshot="
+                # parse_source_entry will raise on empty string snapshot=, but let's test invalid path keys
+                if not bad_key:
+                    continue
+                write(self.root, "concepts/bad_key.md", node(
+                    "type: Concept\n"
+                    "title: 'Bad Key'\n"
+                    "basis: ops-record\n"
+                    f"sources: ['{src_str}']\n",
+                    "# Bad Key\n",
+                ))
+                report = validate_wiki(
+                    self.root,
+                    check_evidence=True,
+                    evidence_dir=self.evidence_dir,
+                    strict_provenance=True,
+                )
+                self.assertFalse(report.ok)
+                self.assertTrue(any("[E1]" in e and "invalid snapshot key" in e for e in report.errors))
+                self.assertEqual(report.evidence.referenced_count, 0)
+                self.assertEqual(report.evidence.missing[0]["reason"], "invalid_snapshot_key")
+
+    def test_ops_record_unreferenced_snapshot_remains_reasoned_orphan(self):
+        key = "unref-ops-snap"
+        self._create_ops_snapshot(
+            key,
+            meta_extra={"orphan_reason": "archived ops snapshot"},
+        )
+
+        report = validate_wiki(
+            self.root,
+            check_evidence=True,
+            evidence_dir=self.evidence_dir,
+            strict_provenance=True,
+        )
+        self.assertTrue(report.ok)
+        self.assertEqual(report.errors, [])
+        e2_warnings = [w for w in report.warnings if "[E2]" in w]
+        self.assertEqual(e2_warnings, [])
+        self.assertEqual(report.evidence.orphan_count, 1)
+        self.assertEqual(report.evidence.unexplained_orphan_count, 0)
 
     def test_nonexistent_evidence_dir_raises(self):
         with self.assertRaises(FileNotFoundError):

@@ -116,14 +116,14 @@ verified_at: "2026-10-29"    # 任意: 照合確認日（YYYY-MM-DD）
   - `mixed`: 外部出典とモデルの一般知識が混在している（`sources` または external ノードへの相対リンクが必要）。
   - `ops-record`: 運用記録・実験ノート等、自身の記録そのものが一次根拠となっている。
 - **`sources`**: 出典文字列のリスト。
-  - 文法: `<kind>:<id>[ issued=YYYY-MM-DD][ retrieved=YYYY-MM-DD][ via=<channel>]`（空白区切り）
-  - 属性キー: `issued`（発行日）、`retrieved`（取得日）、`via`（取得経路。例: `epo-ops`, `epo-eps`）
-  - `kind` 語彙（13種）と陳腐化プロファイル:
+  - 文法: `<kind>:<id>[ issued=YYYY-MM-DD][ retrieved=YYYY-MM-DD][ via=<channel>][ snapshot=<key>]`（空白区切り）
+  - 属性キー: `issued`（発行日）、`retrieved`（取得日）、`via`（取得経路。例: `epo-ops`, `epo-eps`）、`snapshot`（スナップショットキー。`ops-record` 出典で必須）
+  - `kind` 語彙（14種）と陳腐化プロファイル:
     - 不変層: `patent-biblio`（特許書誌）, `patent-claims`（特許クレーム）, `paper`（査読論文）, `standard`（標準・規格）
     - 版管理層: `datasheet`（データシート）, `product-page`（製品ページ）, `patent-legal`（法的状態）
     - 揮発層（3年経過で P8 警告）: `press-release`（プレスリリース）, `news`（報道記事）, `preprint`（プレプリント）
-    - その他: `patent-family`（ファミリー情報・スタブ用）, `web`（一般Web）, `manual`（人手入力）
-    - Web 系（`datasheet`, `product-page`, `press-release`, `standard`, `news`, `web`, `manual`）は `retrieved=YYYY-MM-DD` が必須（P6）。
+    - その他: `patent-family`（ファミリー情報・スタブ用）, `web`（一般Web）, `manual`（人手入力）, `ops-record`（内部記録）
+    - Web 系（`datasheet`, `product-page`, `press-release`, `standard`, `news`, `web`, `manual`）は `retrieved=YYYY-MM-DD` が必須（P6）。`ops-record` は内部記録のため `retrieved=` は不要。
 - **`verified_at`**: 本文が出典と矛盾しないことを照合した日（YYYY-MM-DD）。
 
 ### 本文の統制語彙（3対）
@@ -299,8 +299,11 @@ Phase 3 `< 4,000`（`--phases` で各フェーズを出力）。`--backend sqlit
 
 ### 証跡整合チェック（--check-evidence）
 
-`--check-evidence` を指定すると、各ノートの `sources:` に記載された URL 出典（`web:`, `datasheet:` 等）に対応するスナップショットファイル（`.meta.json` および生本体ファイル）の実在と整合性を検査します。また、未参照スナップショット（孤立）の理由記録状況や墓石（`tombstones`）を監査します。
+`--check-evidence` を指定すると、各ノートの `sources:` に記載された URL 出典（`web:`, `datasheet:` 等）および内部記録出典（`ops-record:`）に対応するスナップショットファイル（`.meta.json` および生本体ファイル）の実在と整合性を検査します。また、未参照スナップショット（孤立）の理由記録状況や墓石（`tombstones`）を監査します。
 保存先ディレクトリを既定（`data/external/source_verify`）から変更する場合は `--evidence-dir <dir>` で上書きします。
+
+- **URL 出典**: URL からスナップショットキー（`.meta.json` / 本体）を導出し、実在・墓石・本体有無を検査します。
+- **内部記録（`ops-record`）**: 文法 `ops-record:<path>[#<section>] snapshot=<key>` の `snapshot=<key>` 属性から直接 `snapshots/<key>.meta.json` および本体ファイルを解決します（キー内の空文字、`/`、`\`、`..` 等のパス巡回は `invalid_snapshot_key` として `E1`）。さらに `.meta.json` 内の `sha256` フィールドの存在と、本体ファイル（複数ある場合はいずれか1つ）の SHA-256 ハッシュ一致を機械検証します（欠落は `missing_sha256`、不一致は `sha256_mismatch` として `E1`）。
 
 ```bash
 # 通常トリアージ実行（警告一覧表示、エラーが無ければ exit 0）

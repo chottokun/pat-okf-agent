@@ -63,6 +63,7 @@ KNOWN_SOURCE_KINDS: tuple[str, ...] = (
     "news",
     "web",
     "manual",
+    "ops-record",
 )
 
 WEB_SOURCE_KINDS: tuple[str, ...] = (
@@ -80,7 +81,7 @@ NEWS_SOURCE_KINDS: tuple[str, ...] = (
     "news",
 )
 
-SOURCE_ATTR_KEYS: tuple[str, ...] = ("issued", "retrieved", "via")
+SOURCE_ATTR_KEYS: tuple[str, ...] = ("issued", "retrieved", "via", "snapshot")
 
 TRANSPARENT_HEADINGS: tuple[str, ...] = (
     "一般知識（未検証）",

@@ -1,6 +1,7 @@
 """Structural validation for an OKF wiki."""
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -502,6 +503,135 @@ def validate_evidence(
                 continue
             try:
                 src_entry = parse_source_entry(s)
+            except ValueError:
+                continue
+
+            if src_entry.kind == "ops-record":
+                snapshot_attr = src_entry.attrs.get("snapshot")
+                if snapshot_attr is None:
+                    warnings.append((
+                        "E1",
+                        f"{rel}: [E1] missing snapshot attribute for {src_entry.kind}:{src_entry.id}",
+                    ))
+                    missing.append({
+                        "rel": rel,
+                        "source": f"{src_entry.kind}:{src_entry.id}",
+                        "reason": "missing_snapshot_attr",
+                    })
+                    continue
+
+                key = snapshot_attr.strip()
+                if not key or "/" in key or "\\" in key or ".." in key:
+                    warnings.append((
+                        "E1",
+                        f"{rel}: [E1] invalid snapshot key {key!r} for {src_entry.kind}:{src_entry.id}",
+                    ))
+                    missing.append({
+                        "rel": rel,
+                        "source": f"{src_entry.kind}:{src_entry.id}",
+                        "key": key,
+                        "reason": "invalid_snapshot_key",
+                    })
+                    continue
+
+                referenced_by.setdefault(key, []).append((rel, src_entry))
+
+                meta_path = meta_files.get(key)
+                if meta_path is None:
+                    warnings.append((
+                        "E1",
+                        f"{rel}: [E1] missing snapshot metadata for {src_entry.kind}:{src_entry.id} (expected snapshots/{key}.meta.json)",
+                    ))
+                    missing.append({
+                        "rel": rel,
+                        "source": f"{src_entry.kind}:{src_entry.id}",
+                        "key": key,
+                        "reason": "missing_metadata",
+                        "expected_meta_path": str(snapshots_dir / f"{key}.meta.json"),
+                    })
+                    continue
+
+                try:
+                    meta_json = json.loads(meta_path.read_text("utf-8"))
+                except Exception:
+                    meta_json = {}
+
+                deleted_at = meta_json.get("deleted_at")
+                if deleted_at and str(deleted_at).strip():
+                    warnings.append((
+                        "E1",
+                        f"{rel}: [E1] source {src_entry.kind}:{src_entry.id} references tombstoned snapshot (snapshots/{key}.meta.json, deleted_at={deleted_at})",
+                    ))
+                    missing.append({
+                        "rel": rel,
+                        "source": f"{src_entry.kind}:{src_entry.id}",
+                        "key": key,
+                        "reason": "tombstone_referenced",
+                        "deleted_at": str(deleted_at).strip(),
+                        "meta_path": str(meta_path),
+                    })
+                    continue
+
+                if key not in body_files or not body_files[key]:
+                    warnings.append((
+                        "E1",
+                        f"{rel}: [E1] missing snapshot body file for {src_entry.kind}:{src_entry.id} (expected snapshots/{key}.<ext>)",
+                    ))
+                    missing.append({
+                        "rel": rel,
+                        "source": f"{src_entry.kind}:{src_entry.id}",
+                        "key": key,
+                        "reason": "missing_body",
+                        "expected_body_pattern": str(snapshots_dir / f"{key}.<ext>"),
+                    })
+                    continue
+
+                expected_sha = meta_json.get("sha256")
+                if expected_sha is None or not str(expected_sha).strip():
+                    warnings.append((
+                        "E1",
+                        f"{rel}: [E1] missing sha256 in snapshot metadata for {src_entry.kind}:{src_entry.id} (snapshots/{key}.meta.json)",
+                    ))
+                    missing.append({
+                        "rel": rel,
+                        "source": f"{src_entry.kind}:{src_entry.id}",
+                        "key": key,
+                        "reason": "missing_sha256",
+                        "meta_path": str(meta_path),
+                    })
+                else:
+                    expected_str = str(expected_sha).strip()
+                    expected_hex = expected_str.removeprefix("sha256:")
+                    matched = False
+                    actual_val = None
+                    for b_path in body_files[key]:
+                        try:
+                            b_bytes = b_path.read_bytes()
+                            b_hex = hashlib.sha256(b_bytes).hexdigest()
+                        except Exception:
+                            continue
+                        if actual_val is None:
+                            actual_val = f"sha256:{b_hex}" if expected_str.startswith("sha256:") else b_hex
+                        if b_hex == expected_hex:
+                            matched = True
+                            break
+                    if not matched:
+                        warnings.append((
+                            "E1",
+                            f"{rel}: [E1] snapshot sha256 mismatch for {src_entry.kind}:{src_entry.id} (expected {expected_str}, got {actual_val})",
+                        ))
+                        missing.append({
+                            "rel": rel,
+                            "source": f"{src_entry.kind}:{src_entry.id}",
+                            "key": key,
+                            "reason": "sha256_mismatch",
+                            "expected": expected_str,
+                            "actual": actual_val,
+                            "meta_path": str(meta_path),
+                        })
+                continue
+
+            try:
                 classified = classify_target(src_entry.id, kind=src_entry.kind)
             except ValueError:
                 continue

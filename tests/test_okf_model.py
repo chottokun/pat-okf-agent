@@ -15,6 +15,7 @@ from pat_okf_agent.wiki.model import (
     BASIS_VALUES,
     KNOWN_SOURCE_KINDS,
     SCOPE_WEIGHTS,
+    SOURCE_ATTR_KEYS,
     WEB_SOURCE_KINDS,
     Concept,
     SourceEntry,
@@ -363,6 +364,22 @@ class ConceptTests(unittest.TestCase):
             with self.subTest(bad=bad):
                 with self.assertRaises(ValueError):
                     parse_source_entry(bad)  # type: ignore[arg-type]
+
+    def test_parse_source_entry_ops_record_and_snapshot(self):
+        self.assertIn("ops-record", KNOWN_SOURCE_KINDS)
+        self.assertNotIn("ops-record", WEB_SOURCE_KINDS)
+        self.assertIn("snapshot", SOURCE_ATTR_KEYS)
+
+        entry = parse_source_entry("ops-record:records/log.md#sec-1 snapshot=tools-md-voicevox")
+        self.assertEqual(entry.kind, "ops-record")
+        self.assertEqual(entry.id, "records/log.md#sec-1")
+        self.assertEqual(entry.attrs, {"snapshot": "tools-md-voicevox"})
+        self.assertEqual(entry.raw, "ops-record:records/log.md#sec-1 snapshot=tools-md-voicevox")
+
+        entry_via = parse_source_entry("ops-record:records/log.md via=manual snapshot=snap1")
+        self.assertEqual(entry_via.kind, "ops-record")
+        self.assertEqual(entry_via.id, "records/log.md")
+        self.assertEqual(entry_via.attrs, {"via": "manual", "snapshot": "snap1"})
 
     def test_validate_meta_provenance_fields(self):
         # valid basis values
