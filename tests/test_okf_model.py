@@ -366,10 +366,11 @@ class ConceptTests(unittest.TestCase):
 
     def test_validate_meta_provenance_fields(self):
         # valid basis values
-        for b in ("external", "model", "mixed"):
+        for b in ("external", "model", "mixed", "ops-record"):
             self.assertEqual(validate_meta({"type": "Note", "basis": b}), [])
-        # invalid basis
-        self.assertTrue(validate_meta({"type": "Note", "basis": "unknown"}))
+        # unknown string basis is not a structural error in validate_meta (reported as P9 in validate_provenance)
+        self.assertEqual(validate_meta({"type": "Note", "basis": "unknown"}), [])
+        # non-string basis remains a structural error
         self.assertTrue(validate_meta({"type": "Note", "basis": 123}))
 
         # valid sources

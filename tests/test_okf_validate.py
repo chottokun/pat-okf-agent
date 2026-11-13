@@ -454,9 +454,43 @@ class ValidationTests(unittest.TestCase):
 
         ingest_publication(SimpleFakeEpo(), "EP9999999B1", self.root, now="2026-10-29T00:00:00Z")
         report = validate_wiki(self.root)
-        provenance_warnings = [w for w in report.warnings if any(f"[P{i}]" in w for i in range(1, 9))]
+        provenance_warnings = [w for w in report.warnings if any(f"[P{i}]" in w for i in range(1, 10))]
         self.assertEqual(provenance_warnings, [])
         self.assertTrue(report.ok)
+
+    def test_strict_provenance_rules_inventory(self):
+        self.assertIn("P9", STRICT_PROVENANCE_RULES)
+
+    def test_provenance_p9_and_ops_record_basis(self):
+        write(self.root, "index.md", "# Index\n")
+        # basis: ops-record node: no errors, no basis-related warnings (P1..P9)
+        write(self.root, "ops.md", node("type: Concept\nbasis: ops-record\n", "# Ops\n\n180 W/m·K\n"))
+        # basis with unknown string: field-notes
+        write(self.root, "custom.md", node("type: Concept\nbasis: field-notes\n", "# Custom\n"))
+        # stub with unknown string: stub exempt from P9
+        write(self.root, "stub.md", node("type: Patent\ntags: [stub]\nbasis: field-notes\n", "# Stub\n"))
+
+        # Default validation (strict_provenance=False)
+        report = validate_wiki(self.root)
+        self.assertTrue(report.ok, report.errors)
+        self.assertEqual(report.errors, [])
+
+        # ops.md has no basis-related warnings
+        self.assertFalse(any("ops.md" in w and any(f"[P{i}]" in w for i in range(1, 10)) for w in report.warnings))
+
+        # stub.md has no P9 warning
+        self.assertFalse(any("stub.md" in w and "[P9]" in w for w in report.warnings))
+
+        # custom.md has [P9] warning with filename and unknown basis value
+        p9_warnings = [w for w in report.warnings if "[P9]" in w]
+        self.assertEqual(len(p9_warnings), 1)
+        self.assertIn("custom.md: [P9] unknown basis: field-notes", p9_warnings[0])
+
+        # Under strict_provenance=True: [P9] is promoted to errors
+        strict_report = validate_wiki(self.root, strict_provenance=True)
+        self.assertFalse(strict_report.ok)
+        self.assertTrue(any("custom.md: [P9] unknown basis: field-notes" in e for e in strict_report.errors))
+        self.assertFalse(any("custom.md: [P9]" in w for w in strict_report.warnings))
 
     def test_concept_skeleton_in_docs_and_skill_validates_cleanly(self):
         docs_path = Path(__file__).resolve().parent.parent / "docs" / "okf_wiki.md"
