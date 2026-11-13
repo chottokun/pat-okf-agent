@@ -245,7 +245,7 @@ def evaluate_synonyms(root: str | Path, backend: Any, index: SynonymIndex, *,
         failures += int(not expanded_ok)
         improved += int(expanded_ok and not baseline_ok)
         regressed += int(baseline_ok and not expanded_ok)
-        rows.append({
+        row: dict[str, Any] = {
             "id": item.get("id"),
             "query": item["query"],
             "expected": sorted(expected),
@@ -254,7 +254,13 @@ def evaluate_synonyms(root: str | Path, backend: Any, index: SynonymIndex, *,
             "baseline_ok": baseline_ok,
             "expanded_ok": expanded_ok,
             "variants": index.expand_query(item["query"]),
-        })
+        }
+        if not expanded_ok:
+            row["failure_detail"] = {
+                "expanded_top_hit": expanded_hits[0].as_dict() if expanded_hits else None,
+                "baseline_top_hit": baseline_hits[0].as_dict() if baseline_hits else None,
+            }
+        rows.append(row)
     if not rows:
         raise ValueError("at least one evaluation query is required")
     total = len(rows)
