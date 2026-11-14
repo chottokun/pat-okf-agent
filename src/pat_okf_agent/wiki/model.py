@@ -14,6 +14,7 @@ from .frontmatter import FrontmatterError, dump_document, parse_frontmatter
 
 __all__ = [
     "BASIS_VALUES",
+    "GENRE_VALUES",
     "KNOWN_SOURCE_KINDS",
     "NEWS_SOURCE_KINDS",
     "SCOPE_WEIGHTS",
@@ -33,6 +34,7 @@ __all__ = [
     "load_concept",
     "parse_source_entry",
     "relevance",
+    "resolve_source_genre",
     "scope_from_heading",
     "scope_of",
     "tokenize",
@@ -82,7 +84,15 @@ NEWS_SOURCE_KINDS: tuple[str, ...] = (
     "news",
 )
 
-SOURCE_ATTR_KEYS: tuple[str, ...] = ("issued", "retrieved", "via", "snapshot")
+GENRE_VALUES: tuple[str, ...] = ("paper", "patent", "web", "other")
+
+SOURCE_ATTR_KEYS: tuple[str, ...] = (
+    "issued",
+    "retrieved",
+    "via",
+    "snapshot",
+    "genre",
+)
 
 TRANSPARENT_HEADINGS: tuple[str, ...] = (
     "一般知識（未検証）",
@@ -146,9 +156,26 @@ def parse_source_entry(entry: str) -> SourceEntry:
         if key in ("issued", "retrieved") and not _is_valid_iso_date(val):
             raise ValueError(
                 f"invalid ISO date for {key}={val!r} in {entry!r}")
+        if key == "genre" and val not in GENRE_VALUES:
+            raise ValueError(
+                f"invalid source genre {val!r} (expected one of {GENRE_VALUES}) in {entry!r}")
         attrs[key] = val
     return SourceEntry(kind=kind, id=source_id, attrs=attrs,
                        raw=entry.strip())
+
+
+def resolve_source_genre(entry: SourceEntry) -> str:
+    """Resolve effective source genre: explicit ``genre=`` wins over ``kind`` default."""
+    explicit = entry.attrs.get("genre")
+    if explicit in GENRE_VALUES:
+        return explicit
+    if entry.kind in ("paper", "preprint"):
+        return "paper"
+    if entry.kind.startswith("patent-"):
+        return "patent"
+    if entry.kind in WEB_SOURCE_KINDS:
+        return "web"
+    return "other"
 
 SPECIAL_FILES = {"index.md", "log.md"}
 _INDEX_RE = re.compile(r"^index(?:-\d+)?\.md$")

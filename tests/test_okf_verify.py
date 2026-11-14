@@ -1658,6 +1658,39 @@ class TestVerifyFile(unittest.TestCase):
             with self.assertRaises(ValueError):
                 verifier.verify_file(root / "missing.pdf", kind="bogus-kind")
 
+            with self.assertRaises(ValueError):
+                verifier.verify_file(root / "missing.pdf", genre="bogus-genre")
+
+    def test_verify_file_with_explicit_genre_persists_in_meta_and_source(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            cache_dir = root / "evidence"
+            note = root / "report.txt"
+            note.write_text("Owner-supplied thermal evaluation report.\n", encoding="utf-8")
+
+            verifier = SourceVerifier(cache_dir=cache_dir)
+            res = verifier.verify_file(note, genre="paper")
+            self.assertTrue(res.ok)
+            self.assertEqual(res.genre, "paper")
+            self.assertIn("genre=paper", res.okf_source or "")
+            parsed = parse_source_entry(res.okf_source or "")
+            self.assertEqual(parsed.attrs.get("genre"), "paper")
+
+            meta = json.loads(
+                (cache_dir / "snapshots" / f"{res.snapshot}.meta.json").read_text("utf-8")
+            )
+            self.assertEqual(meta.get("genre"), "paper")
+
+            # Cached re-verification preserves genre from .meta.json when omitted
+            res_cached = verifier.verify_file(note)
+            self.assertTrue(res_cached.evidence.cached)
+            self.assertEqual(res_cached.genre, "paper")
+            self.assertIn("genre=paper", res_cached.okf_source or "")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -19,10 +19,12 @@ from .evolution import (
     propose_cluster,
     render_skill,
 )
+from .export import EXPORT_FORMAT_VERSIONS, EXPORT_SCOPES, export_bundle, write_export_bundle
 from .frontmatter import FrontmatterError, parse_frontmatter
 from .graph import build_graph
 from .index import stale_indexes, write_indexes
 from .ingest import ingest_publication, ingest_query
+from .model import GENRE_VALUES
 from .search import BackendUnavailable, attach_link_counts, get_backend, is_admin_file
 from .synonyms import (
     ExpandedSearchBackend,
@@ -280,6 +282,12 @@ def _parser() -> argparse.ArgumentParser:
         help="verify and snapshot a local file path",
     )
     p_verify.add_argument("--kind", default=None, help="override source kind")
+    p_verify.add_argument(
+        "--genre",
+        choices=list(GENRE_VALUES),
+        default=None,
+        help="explicit source genre (paper, patent, web, other)",
+    )
     p_verify.add_argument("--issued", default=None, help="known issue date YYYY-MM-DD")
     p_verify.add_argument("--expect-title", default=None, help="expected title substring")
     p_verify.add_argument("--expect-author", default=None, help="expected author name")
@@ -371,6 +379,39 @@ def _parser() -> argparse.ArgumentParser:
         help="exclude admin/aggregate notes (default)",
     )
     p_links.add_argument("--json", action="store_true", help="output JSON result")
+
+    p_export = sub.add_parser(
+        "export",
+        help="export one or more OKF KBs to a deterministic viewer JSON bundle",
+    )
+    p_export.add_argument("dirs", nargs="+", help="one or more KB root directories")
+    p_export.add_argument("--out", default=None, help="output JSON file path (omit to print bundle to stdout)")
+    p_export.add_argument(
+        "--label",
+        action="append",
+        default=None,
+        help="display label for each KB directory (repeatable, positional order)",
+    )
+    p_export.add_argument(
+        "--cache-dir",
+        action="append",
+        default=None,
+        help="additional offline source_verify cache directory (repeatable)",
+    )
+    p_export.add_argument(
+        "--format-version",
+        type=int,
+        choices=list(EXPORT_FORMAT_VERSIONS),
+        default=2,
+        help="output schema version (1=prototype compatible, 2=first-class papers & sources; default: 2)",
+    )
+    p_export.add_argument(
+        "--scope",
+        choices=list(EXPORT_SCOPES),
+        default="all",
+        help="which collections to export (default: all)",
+    )
+    p_export.add_argument("--json", action="store_true", help="output summary as JSON when --out is given")
 
     return parser
 
@@ -819,6 +860,7 @@ def _dispatch(args: argparse.Namespace) -> int:
             res = verifier.verify_file(
                 args.file,
                 kind=args.kind,
+                genre=args.genre,
                 issued=args.issued,
                 expect_title=args.expect_title,
                 expect_author=args.expect_author,
@@ -829,6 +871,7 @@ def _dispatch(args: argparse.Namespace) -> int:
             res = verifier.verify(
                 args.target,
                 kind=args.kind,
+                genre=args.genre,
                 issued=args.issued,
                 expect_title=args.expect_title,
                 expect_author=args.expect_author,
@@ -1052,6 +1095,57 @@ def _dispatch(args: argparse.Namespace) -> int:
                         f"UNREACHABLE: {item['rel']} "
                         f"(in={item['inbound_count']}, out={item['outbound_count']})"
                     )
+        return 0
+
+    if args.command == "export":
+        labels = args.label or []
+        if len(labels) > len(args.dirs):
+            print("error: more --label options than KB directories", file=sys.stderr)
+            return 2
+        kb_specs: list[tuple[Path, str | None]] = []
+        for idx, d in enumerate(args.dirs):
+            p = Path(d)
+            if not p.exists() or not p.is_dir():
+                print(f"error: KB directory not found: {d}", file=sys.stderr)
+                return 1
+            kb_specs.append((p, labels[idx] if idx < len(labels) else None))
+
+        cache_dirs = [Path(c) for c in args.cache_dir] if args.cache_dir else None
+        if args.out:
+            bundle = write_export_bundle(
+                args.out,
+                kb_specs,
+                cache_dirs=cache_dirs,
+                format_version=args.format_version,
+                scope=args.scope,
+            )
+            if args.json:
+                summary = {
+                    "out": str(Path(args.out)),
+                    "format_version": bundle["format_version"],
+                    "export_scope": bundle["export_scope"],
+                    "kbs": [
+                        {"id": kb["id"], "label": kb["label"], "stats": kb["stats"]}
+                        for kb in bundle["kbs"]
+                    ],
+                    "warnings_count": len(bundle.get("warnings", [])),
+                    "warnings": bundle.get("warnings", []),
+                }
+                print(json.dumps(summary, ensure_ascii=False, indent=2))
+            else:
+                for kb in bundle["kbs"]:
+                    print(f"{kb['id']}: {kb['stats']}")
+                if bundle.get("warnings"):
+                    print(f"warnings: {len(bundle['warnings'])}")
+                print(f"wrote: {args.out}")
+        else:
+            bundle = export_bundle(
+                kb_specs,
+                cache_dirs=cache_dirs,
+                format_version=args.format_version,
+                scope=args.scope,
+            )
+            print(json.dumps(bundle, ensure_ascii=False, indent=1, default=str))
         return 0
 
     return 2
