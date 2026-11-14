@@ -79,7 +79,7 @@ The ingester:
 
 Read the JSON summary:
 
-- `claims` and `claims_source`: records whether OPS or EPS supplied claims
+- `claims` and `claims_source`: records whether OPS or EPS supplied claims. If claims are unavailable for a CN publication, inspect `family` and attempt `ingest-epo` (cache-first with `--offline`, one member at a time, stopping once claims are obtained) on a `WO`/`US`/`EP` family member before restricting the concept note to title/biblio-level claims; record the fallback and final claim source in the batch status line.
 - `family` and `stubs`: expected family linkage
 - `warnings`: missing claims/family are explicit, never inferred
 - `index_files`: regenerated indexes
@@ -126,7 +126,7 @@ uv run okf stats <wiki> --json
 | Symptom | Action |
 | --- | --- |
 | `uncached` offline | rerun `okf ingest-epo` without `--offline` for that publication |
-| `claims unavailable` | try EPS for EP publications; otherwise record warning |
+| `claims unavailable` | try EPS for EP publications; for CN publications, try a `WO`/`US`/`EP` family member (`--offline` first, stop once claims are obtained); otherwise record warning and restrict body claims to title/biblio |
 | `family unavailable` | keep the patent node; do not invent members |
 | broken family link | create the stub or remove the link; validate again |
 | `BackendUnavailable` | fall back to Pattern A local search |
