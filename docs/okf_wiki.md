@@ -748,10 +748,17 @@ uv run okf verify-source "datasheet:https://example.com/aln-datasheet.pdf" \
   --json
 
 # ローカル素材（PDF / HTML / TXT / Markdown）の取り込みと証跡スナップショット保存（オフライン動作）
+# --genre で種別（paper / patent / web / other）を明示可能（省略時は kind から既定推定）
 uv run okf verify-source --file ./materials/report.pdf \
   --cache-dir mywiki/evidence \
+  --genre paper \
   --check-claim "180 W/m" \
   --json
+
+# 複数 KB をビューア向け JSON（format_version=2）へ決定論・オフラインでエクスポート
+uv run okf export mywiki1 mywiki2 \
+  --label "KB1" --label "KB2" \
+  --out /tmp/okf-export.json --json
 
 # 不採用スナップショットへの理由記録（孤立トリアージ）
 uv run okf verify-source "https://example.com/unadopted.html" \
@@ -819,9 +826,7 @@ uv run okf search examples/wiki "クレーム" --backend sqlite \
 - EPO 以外のソース（USPTO）は既存の `uspto` クライアントで取得し、
   `type`/`scope` を付けた Markdown を生成すれば同じグラフに載ります。
   USPTO → OKF の自動インジェスタは未接続です（今回の対象外）。
-- 複数 KB をビューア向け JSON バンドルへまとめる汎用 `okf export` CLI は未実装です
-  （現在はプロトタイプスクリプト `scripts/export_kb_viewer_all.py --base <dir> --out <path> [--scope all|concepts|patents]`
-  を先行運用しています）。
+- 複数 KB をビューア向け JSON バンドルへまとめる汎用 `okf export` CLI（`format_version=2`、`genre` 軸による論文 `papers[]` 導出、`index.md` 出現順維持、オフライン・ローカルキャッシュ完結＋未キャッシュ／タイトル欠落時の最小レコード＋ `warnings` 出力）を実装済みです（`scripts/export_kb_viewer_all.py` は `format_version=1` 互換の先行プロトタイプです）。
 - 大規模化したら `okf stats` と `okf eval-synonyms` の推奨を目安に、
   B/C へ明示的に移行してください。
 

@@ -61,7 +61,8 @@ uv run okf context mywiki "アモルファス クレーム"
 uv run okf sqlite mywiki                         # Pattern B (SQLite-FTS5)
 uv run okf validate mywiki
 uv run okf links mywiki --json                   # diagnose zero-inbound / isolated concepts & components
-uv run okf verify-source --file ./local.pdf --cache-dir mywiki/evidence --json
+uv run okf verify-source --file ./local.pdf --cache-dir mywiki/evidence --genre other --json
+uv run okf export mywiki --out /tmp/okf-export.json --json
 uv run okf search mywiki "metallic glass" --expand --json
 uv run okf eval-synonyms mywiki --check
 uv run okf evolve mywiki --history .agents/flow_history.jsonl

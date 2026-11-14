@@ -168,4 +168,4 @@ KB が 10 概念以上に育ったら、KB 直下に `eval_queries.json`（代�
 3. **不採用スナップショットの衛生管理**:
    * `verify-source` で取得したものの結局ノートに採用しなかったスナップショットには、必ず `--orphan-reason "<理由>"` を記録してください。これにより `validate --check-evidence` での未説明孤立（`[E2]`）警告を防げます。
 4. **ビューア用 JSON バンドルのエクスポート（ローカル連携時）**:
-   * 構築した複数の KB をまとめてビューア向け JSON（`concepts`・`patents`・`synonyms`・件数サマリ）として出力する場合は、`scripts/export_kb_viewer_all.py`（`--base <KB親ディレクトリ> --out <出力JSONパス> [--scope all|concepts|patents]`）を使用できます（`python3` と `.venv` / `uv run python` のどちらでも動作し、`--scope patents` でも `related_concepts` 逆リンクは維持されます）。将来は本体 CLI の `okf export` へ正式化予定です。
+   * 構築した単一または複数の KB をビューア向け JSON（`format_version: 2`、概念の `index.md` 順配列、`papers` 導出、構造化 `sources`、`patents`、`synonyms`、件数サマリ）として出力する場合は、本体 CLI の `uv run okf export <KBディレクトリ>... --out <出力JSONパス> [--label <表示名>...] [--scope all|concepts|patents] [--json]` を使用します。ネットワークには一切アクセスせずローカルの `evidence/` と `data/external/source_verify/` キャッシュのみから書誌を解決し、未キャッシュまたはタイトル欠落の論文は最小レコード＋ `warnings` として報告されます（`scripts/export_kb_viewer_all.py` は `format_version: 1` 互換の先行プロトタイプです）。

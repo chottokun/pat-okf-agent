@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from pat_okf_agent.epo import RateLimiter, _atomic_write, _safe_name
-from pat_okf_agent.wiki.model import KNOWN_SOURCE_KINDS, parse_source_entry
+from pat_okf_agent.wiki.model import GENRE_VALUES, KNOWN_SOURCE_KINDS, parse_source_entry
 
 # Exceptions
 
@@ -117,6 +117,7 @@ class VerificationResult:
     warnings: list[str] = field(default_factory=list)
     error: str | None = None
     snapshot: str | None = None
+    genre: str | None = None
 
     def format_okf_source(self) -> str | None:
         """Format an OKF frontmatter source entry if verification succeeded."""
@@ -132,6 +133,8 @@ class VerificationResult:
             tokens.append(f"via={self.via}")
         if self.snapshot:
             tokens.append(f"snapshot={self.snapshot}")
+        if self.genre:
+            tokens.append(f"genre={self.genre}")
 
         source_str = " ".join(tokens)
         # Validate format against model parser
@@ -151,6 +154,7 @@ class VerificationResult:
             "via": self.via,
             "retrieved_at": self.retrieved_at,
             "issued": self.issued,
+            "genre": self.genre,
             "metadata": asdict(self.metadata),
             "checks": asdict(self.checks),
             "evidence": asdict(self.evidence),
@@ -821,6 +825,7 @@ class SourceVerifier:
         target: str,
         *,
         kind: str | None = None,
+        genre: str | None = None,
         issued: str | None = None,
         expect_title: str | None = None,
         expect_author: str | None = None,
@@ -828,10 +833,13 @@ class SourceVerifier:
         check_claim: list[str] | None = None,
         verify_landing: bool = False,
     ) -> VerificationResult:
+        if genre is not None and genre not in GENRE_VALUES:
+            raise ValueError(f"Unknown source genre: {genre!r} (expected one of {GENRE_VALUES})")
         classified = classify_target(target, kind=kind)
         if classified.identifier_type == "doi":
             return self.verify_doi(
                 classified,
+                genre=genre,
                 issued=issued,
                 expect_title=expect_title,
                 expect_author=expect_author,
@@ -842,6 +850,7 @@ class SourceVerifier:
         if classified.identifier_type == "arxiv":
             return self.verify_arxiv(
                 classified,
+                genre=genre,
                 issued=issued,
                 expect_title=expect_title,
                 expect_author=expect_author,
@@ -851,6 +860,7 @@ class SourceVerifier:
         if classified.identifier_type == "url":
             return self.verify_url(
                 classified,
+                genre=genre,
                 issued=issued,
                 expect_title=expect_title,
                 expect_author=expect_author,
@@ -865,6 +875,7 @@ class SourceVerifier:
         self,
         target: ClassifiedTarget | str,
         *,
+        genre: str | None = None,
         issued: str | None = None,
         expect_title: str | None = None,
         expect_author: str | None = None,
@@ -872,6 +883,8 @@ class SourceVerifier:
         check_claim: list[str] | None = None,
         verify_landing: bool = False,
     ) -> VerificationResult:
+        if genre is not None and genre not in GENRE_VALUES:
+            raise ValueError(f"Unknown source genre: {genre!r} (expected one of {GENRE_VALUES})")
         classified = (
             target
             if isinstance(target, ClassifiedTarget)
@@ -997,6 +1010,7 @@ class SourceVerifier:
             checks=checks,
             evidence=evidence,
             warnings=warnings,
+            genre=genre,
         )
         if ok:
             res.okf_source = res.format_okf_source()
@@ -1360,12 +1374,15 @@ class SourceVerifier:
         self,
         target: ClassifiedTarget | str,
         *,
+        genre: str | None = None,
         issued: str | None = None,
         expect_title: str | None = None,
         expect_author: str | None = None,
         expect_year: int | None = None,
         check_claim: list[str] | None = None,
     ) -> VerificationResult:
+        if genre is not None and genre not in GENRE_VALUES:
+            raise ValueError(f"Unknown source genre: {genre!r} (expected one of {GENRE_VALUES})")
         classified = (
             target
             if isinstance(target, ClassifiedTarget)
@@ -1500,6 +1517,7 @@ class SourceVerifier:
             checks=checks,
             evidence=evidence,
             warnings=warnings,
+            genre=genre,
         )
         if ok:
             res.okf_source = res.format_okf_source()
@@ -1509,12 +1527,15 @@ class SourceVerifier:
         self,
         target: ClassifiedTarget | str,
         *,
+        genre: str | None = None,
         issued: str | None = None,
         expect_title: str | None = None,
         expect_author: str | None = None,
         expect_year: int | None = None,
         check_claim: list[str] | None = None,
     ) -> VerificationResult:
+        if genre is not None and genre not in GENRE_VALUES:
+            raise ValueError(f"Unknown source genre: {genre!r} (expected one of {GENRE_VALUES})")
         classified = (
             target
             if isinstance(target, ClassifiedTarget)
@@ -1538,6 +1559,7 @@ class SourceVerifier:
         text: str = ""
         pdf_ok: bool = True
         is_pdf: bool = False
+        effective_genre: str | None = genre
         warnings: list[str] = []
 
         if meta_path.exists() and not self.refresh:
@@ -1553,6 +1575,8 @@ class SourceVerifier:
             text = snap_state["text"]
             is_pdf = snap_state["is_pdf"]
             pdf_ok = snap_state["pdf_ok"]
+            if effective_genre is None:
+                effective_genre = snap_state.get("genre")
         else:
             status, resp_headers, body = self._http_request(
                 url,
@@ -1662,6 +1686,8 @@ class SourceVerifier:
                 "extracted_publisher": extracted_publisher,
                 "extracted_issued": extracted_issued,
             }
+            if genre is not None:
+                meta_payload["genre"] = genre
             _atomic_write_bytes(
                 meta_path,
                 json.dumps(meta_payload, indent=2, ensure_ascii=False),
@@ -1692,6 +1718,7 @@ class SourceVerifier:
             expect_year=expect_year,
             check_claim=check_claim,
             warnings=warnings,
+            genre=effective_genre,
         )
 
     def _load_cached_snapshot(
@@ -1757,6 +1784,7 @@ class SourceVerifier:
             "text": text,
             "is_pdf": is_pdf,
             "pdf_ok": pdf_ok,
+            "genre": meta_json.get("genre"),
         }
 
     def _finalize_snapshot_result(
@@ -1787,6 +1815,7 @@ class SourceVerifier:
         check_claim: list[str] | None,
         warnings: list[str],
         snapshot_key: str | None = None,
+        genre: str | None = None,
     ) -> VerificationResult:
         meta = SourceMetadata(
             title=title,
@@ -1843,6 +1872,7 @@ class SourceVerifier:
             evidence=evidence,
             warnings=warnings,
             snapshot=snapshot_key,
+            genre=genre,
         )
         if ok:
             res.okf_source = res.format_okf_source()
@@ -1866,6 +1896,7 @@ class SourceVerifier:
         file_path: str | Path,
         *,
         kind: str | None = None,
+        genre: str | None = None,
         issued: str | None = None,
         expect_title: str | None = None,
         expect_author: str | None = None,
@@ -1876,6 +1907,8 @@ class SourceVerifier:
         effective_kind = kind or "local-file"
         if effective_kind not in KNOWN_SOURCE_KINDS:
             raise ValueError(f"Unknown source kind: {effective_kind!r}")
+        if genre is not None and genre not in GENRE_VALUES:
+            raise ValueError(f"Unknown source genre: {genre!r} (expected one of {GENRE_VALUES})")
 
         path = Path(file_path)
         identifier = _sanitize_local_identifier(path.name if path.name else str(file_path))
@@ -1926,6 +1959,7 @@ class SourceVerifier:
         text: str = ""
         pdf_ok: bool = True
         is_pdf: bool = False
+        effective_genre: str | None = genre
         warnings: list[str] = []
 
         if meta_path.exists() and not self.refresh:
@@ -1941,6 +1975,8 @@ class SourceVerifier:
             text = snap_state["text"]
             is_pdf = snap_state["is_pdf"]
             pdf_ok = snap_state["pdf_ok"]
+            if effective_genre is None:
+                effective_genre = snap_state.get("genre")
         else:
             original_ext = path.suffix.lower().lstrip(".")
             if original_ext == "pdf" or body.startswith(b"%PDF"):
@@ -2001,6 +2037,8 @@ class SourceVerifier:
                 "extracted_publisher": extracted_publisher,
                 "extracted_issued": extracted_issued,
             }
+            if genre is not None:
+                meta_payload["genre"] = genre
             _atomic_write_bytes(
                 meta_path,
                 json.dumps(meta_payload, indent=2, ensure_ascii=False),
@@ -2032,6 +2070,7 @@ class SourceVerifier:
             check_claim=check_claim,
             warnings=warnings,
             snapshot_key=key,
+            genre=effective_genre,
         )
 
 

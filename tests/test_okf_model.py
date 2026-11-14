@@ -13,6 +13,7 @@ from pat_okf_agent.wiki.frontmatter import (
 )
 from pat_okf_agent.wiki.model import (
     BASIS_VALUES,
+    GENRE_VALUES,
     KNOWN_SOURCE_KINDS,
     SCOPE_WEIGHTS,
     SOURCE_ATTR_KEYS,
@@ -26,6 +27,7 @@ from pat_okf_agent.wiki.model import (
     load_concept,
     parse_source_entry,
     relevance,
+    resolve_source_genre,
     scope_from_heading,
     scope_of,
     tokenize,
@@ -396,6 +398,33 @@ class ConceptTests(unittest.TestCase):
                 "snapshot": "local_0123456789abcdef",
             },
         )
+
+    def test_parse_source_entry_genre_and_resolve_default(self):
+        self.assertIn("genre", SOURCE_ATTR_KEYS)
+        self.assertEqual(GENRE_VALUES, ("paper", "patent", "web", "other"))
+
+        # Default mapping from kind when genre= is omitted
+        self.assertEqual(resolve_source_genre(parse_source_entry("paper:10.1/x")), "paper")
+        self.assertEqual(resolve_source_genre(parse_source_entry("preprint:arXiv:2309.06180")), "paper")
+        self.assertEqual(resolve_source_genre(parse_source_entry("patent-biblio:EP1")), "patent")
+        self.assertEqual(resolve_source_genre(parse_source_entry("web:https://example.com")), "web")
+        self.assertEqual(resolve_source_genre(parse_source_entry("ops-record:log.md snapshot=s1")), "other")
+        self.assertEqual(resolve_source_genre(parse_source_entry("local-file:notes.txt snapshot=s2")), "other")
+
+        # Explicit genre= overrides kind default (e.g. web PDF of a paper)
+        explicit_paper = parse_source_entry(
+            "web:https://www.usenix.org/system/files/osdi22-yu.pdf retrieved=2026-11-13 via=web genre=paper"
+        )
+        self.assertEqual(explicit_paper.attrs["genre"], "paper")
+        self.assertEqual(resolve_source_genre(explicit_paper), "paper")
+
+        explicit_local = parse_source_entry(
+            "local-file:report.pdf retrieved=2026-11-14 via=local-file snapshot=local_0123 genre=paper"
+        )
+        self.assertEqual(resolve_source_genre(explicit_local), "paper")
+
+        with self.assertRaises(ValueError):
+            parse_source_entry("local-file:notes.txt genre=invalid")
 
     def test_validate_meta_provenance_fields(self):
         # valid basis values
