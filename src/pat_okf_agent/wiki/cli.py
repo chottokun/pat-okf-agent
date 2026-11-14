@@ -23,7 +23,7 @@ from .frontmatter import FrontmatterError, parse_frontmatter
 from .graph import build_graph
 from .index import stale_indexes, write_indexes
 from .ingest import ingest_publication, ingest_query
-from .search import BackendUnavailable, attach_link_counts, get_backend
+from .search import BackendUnavailable, attach_link_counts, get_backend, is_admin_file
 from .synonyms import (
     ExpandedSearchBackend,
     SynonymIndex,
@@ -38,6 +38,7 @@ from .verify import (
     SourceVerifier,
     SourceVerifyError,
     set_snapshot_orphan_reason,
+    snapshot_key_for_file,
     snapshot_key_for_url,
 )
 
@@ -46,6 +47,7 @@ __all__ = [
     "SourceVerifier",
     "SourceVerifyError",
     "set_snapshot_orphan_reason",
+    "snapshot_key_for_file",
     "snapshot_key_for_url",
 ]
 
@@ -264,9 +266,19 @@ def _parser() -> argparse.ArgumentParser:
 
     p_verify = sub.add_parser(
         "verify-source",
-        help="verify an external source (DOI, arXiv ID, or Web URL)",
+        help="verify an external source (DOI, arXiv ID, Web URL, or local file)",
     )
-    p_verify.add_argument("target", help="DOI, arXiv ID, Web URL, or <kind>:<id>")
+    p_verify.add_argument(
+        "target",
+        nargs="?",
+        default=None,
+        help="DOI, arXiv ID, Web URL, or <kind>:<id>",
+    )
+    p_verify.add_argument(
+        "--file",
+        default=None,
+        help="verify and snapshot a local file path",
+    )
     p_verify.add_argument("--kind", default=None, help="override source kind")
     p_verify.add_argument("--issued", default=None, help="known issue date YYYY-MM-DD")
     p_verify.add_argument("--expect-title", default=None, help="expected title substring")
@@ -327,6 +339,38 @@ def _parser() -> argparse.ArgumentParser:
         default=[],
         help="exit 1 if specified relation kind is detected (repeatable)",
     )
+
+    p_links = sub.add_parser(
+        "links",
+        help="diagnose link reachability, zero-inbound concepts, and components",
+    )
+    p_links.add_argument("dir", help="wiki root directory")
+    p_links.add_argument(
+        "--from",
+        dest="seeds",
+        action="append",
+        default=None,
+        help="seed concept(s) to test reachability from (repeatable)",
+    )
+    p_links.add_argument(
+        "--direction",
+        choices=("out", "in", "both"),
+        default="out",
+        help="traversal direction for --from reachability (default: out)",
+    )
+    p_links.add_argument(
+        "--include-admin",
+        action="store_true",
+        default=False,
+        help="include admin/aggregate notes (BUILDLOG, SUMMARY, index)",
+    )
+    p_links.add_argument(
+        "--no-admin",
+        dest="include_admin",
+        action="store_false",
+        help="exclude admin/aggregate notes (default)",
+    )
+    p_links.add_argument("--json", action="store_true", help="output JSON result")
 
     return parser
 
@@ -738,10 +782,22 @@ def _dispatch(args: argparse.Namespace) -> int:
         return 0
 
     if args.command == "verify-source":
+        has_target = args.target is not None and str(args.target).strip() != ""
+        has_file = args.file is not None and str(args.file).strip() != ""
+        if has_target == has_file:
+            print(
+                "error: specify exactly one of <target> or --file <path>",
+                file=sys.stderr,
+            )
+            return 2
+
         if getattr(args, "orphan_reason", None) is not None:
             cache_dir = Path(args.cache_dir or DEFAULT_CACHE_DIR)
             meta_path = set_snapshot_orphan_reason(
-                cache_dir, args.target, args.orphan_reason
+                cache_dir,
+                args.target or "",
+                args.orphan_reason,
+                file_path=args.file,
             )
             if args.json:
                 meta_json = json.loads(meta_path.read_text("utf-8"))
@@ -759,16 +815,27 @@ def _dispatch(args: argparse.Namespace) -> int:
             sleep=args.sleep,
             no_rate_state=args.no_rate_state,
         )
-        res = verifier.verify(
-            args.target,
-            kind=args.kind,
-            issued=args.issued,
-            expect_title=args.expect_title,
-            expect_author=args.expect_author,
-            expect_year=args.expect_year,
-            check_claim=args.check_claim,
-            verify_landing=args.verify_landing,
-        )
+        if has_file:
+            res = verifier.verify_file(
+                args.file,
+                kind=args.kind,
+                issued=args.issued,
+                expect_title=args.expect_title,
+                expect_author=args.expect_author,
+                expect_year=args.expect_year,
+                check_claim=args.check_claim,
+            )
+        else:
+            res = verifier.verify(
+                args.target,
+                kind=args.kind,
+                issued=args.issued,
+                expect_title=args.expect_title,
+                expect_author=args.expect_author,
+                expect_year=args.expect_year,
+                check_claim=args.check_claim,
+                verify_landing=args.verify_landing,
+            )
         if args.json:
             print(json.dumps(res.as_dict(), indent=2, ensure_ascii=False))
         else:
@@ -913,6 +980,78 @@ def _dispatch(args: argparse.Namespace) -> int:
                     and not cand.verbatim_check.get("verbatim_found", True)
                 ):
                     return 1
+        return 0
+
+    if args.command == "links":
+        wiki = Path(args.dir)
+        if not wiki.exists() or not wiki.is_dir():
+            print(f"error: wiki root directory not found: {args.dir}", file=sys.stderr)
+            return 1
+
+        graph = build_graph(wiki)
+        resolved_seeds: list[str] | None = None
+        if args.seeds:
+            resolved_seeds = []
+            for seed in args.seeds:
+                try:
+                    resolved = graph.resolve_seed(seed)
+                except KeyError:
+                    print(f"error: seed concept not found: {seed}", file=sys.stderr)
+                    return 1
+                if resolved not in resolved_seeds:
+                    resolved_seeds.append(resolved)
+
+        exclude_nodes = (
+            set()
+            if args.include_admin
+            else {rel for rel in graph.nodes if is_admin_file(rel)}
+        )
+        if resolved_seeds:
+            exclude_nodes -= set(resolved_seeds)
+
+        report = graph.diagnose_reachability(
+            seeds=resolved_seeds,
+            direction=args.direction,
+            exclude_nodes=exclude_nodes,
+        )
+        if args.json:
+            print(json.dumps(report.as_dict(), ensure_ascii=False, indent=2))
+        else:
+            print(
+                f"NODES: {report.node_count}, EDGES: {report.edge_count}, "
+                f"COMPONENTS: {report.component_count}, BROKEN: {report.broken_link_count}"
+            )
+            print(
+                f"ISOLATED: {report.isolated_count}, "
+                f"ZERO_INBOUND: {report.zero_inbound_count}, "
+                f"ZERO_OUTBOUND: {report.zero_outbound_count}"
+            )
+            for item in report.isolated:
+                print(f"ISOLATED_NODE: {item['rel']} ({item['title']})")
+            for item in report.zero_inbound:
+                if not item.get("is_isolated"):
+                    print(f"ZERO_INBOUND: {item['rel']} (out={item['outbound_count']})")
+            for item in report.zero_outbound:
+                if not item.get("is_isolated"):
+                    print(f"ZERO_OUTBOUND: {item['rel']} (in={item['inbound_count']})")
+            if report.component_count > 1:
+                for idx, comp in enumerate(report.components, start=1):
+                    preview = ", ".join(comp["nodes"][:5])
+                    suffix = ", ..." if comp["size"] > 5 else ""
+                    print(f"COMPONENT[{idx}] size={comp['size']}: {preview}{suffix}")
+            if report.seed_reachability:
+                sr = report.seed_reachability
+                seeds_str = ", ".join(sr["seeds"])
+                print(
+                    f"SEED_REACHABILITY: {sr['reachable_count']} reachable, "
+                    f"{sr['unreachable_count']} unreachable from [{seeds_str}] "
+                    f"(direction={sr['direction']})"
+                )
+                for item in sr["unreachable"]:
+                    print(
+                        f"UNREACHABLE: {item['rel']} "
+                        f"(in={item['inbound_count']}, out={item['outbound_count']})"
+                    )
         return 0
 
     return 2

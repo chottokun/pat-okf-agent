@@ -64,6 +64,7 @@ KNOWN_SOURCE_KINDS: tuple[str, ...] = (
     "web",
     "manual",
     "ops-record",
+    "local-file",
 )
 
 WEB_SOURCE_KINDS: tuple[str, ...] = (

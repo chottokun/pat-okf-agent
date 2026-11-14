@@ -1117,6 +1117,77 @@ class TestEvidenceValidation(unittest.TestCase):
         self.assertEqual(report.evidence.orphan_count, 1)
         self.assertEqual(report.evidence.unexplained_orphan_count, 0)
 
+    def test_local_file_evidence_verified_and_tamper_detected(self):
+        from pat_okf_agent.wiki.verify import SourceVerifier
+
+        mat_dir = Path(self.tmp.name) / "materials"
+        mat_dir.mkdir()
+        src_md = mat_dir / "user_spec.md"
+        src_md.write_text("# Spec\n\nDensity: 3.26 g/cm3\n", encoding="utf-8")
+
+        verifier = SourceVerifier(cache_dir=self.evidence_dir)
+        res = verifier.verify_file(src_md)
+        self.assertTrue(res.ok)
+
+        write(self.root, "concepts/aln_local.md", node(
+            "type: Concept\n"
+            "title: 'AlN Local'\n"
+            "basis: external\n"
+            f"sources: ['{res.okf_source}']\n"
+            f"verified_at: '{res.retrieved_at}'\n",
+            "# AlN Local\n\nDensity is 3.26 g/cm3.\n",
+        ))
+
+        report_ok = validate_wiki(
+            self.root,
+            check_orphans=False,
+            check_evidence=True,
+            evidence_dir=self.evidence_dir,
+            strict_provenance=True,
+        )
+        self.assertTrue(report_ok.ok, f"errors={report_ok.errors} warnings={report_ok.warnings}")
+        self.assertEqual(report_ok.evidence.referenced_count, 1)
+        self.assertEqual(report_ok.evidence.missing_count, 0)
+
+        # Corrupting snapshot body triggers [E1] sha256_mismatch
+        snap_body = self.evidence_dir / "snapshots" / f"{res.snapshot}.txt"
+        snap_body.write_text("tampered content", encoding="utf-8")
+        report_bad = validate_wiki(
+            self.root,
+            check_orphans=False,
+            check_evidence=True,
+            evidence_dir=self.evidence_dir,
+            strict_provenance=True,
+        )
+        self.assertFalse(report_bad.ok)
+        self.assertTrue(
+            any("[E1]" in e and "snapshot sha256 mismatch" in e for e in report_bad.errors)
+        )
+        self.assertEqual(report_bad.evidence.missing[0]["reason"], "sha256_mismatch")
+
+    def test_local_file_orphan_warning_uses_original_filename(self):
+        from pat_okf_agent.wiki.verify import SourceVerifier
+
+        mat_dir = Path(self.tmp.name) / "materials"
+        mat_dir.mkdir()
+        unadopted = mat_dir / "unadopted_memo.txt"
+        unadopted.write_text("Unreferenced local memo\n", encoding="utf-8")
+
+        verifier = SourceVerifier(cache_dir=self.evidence_dir)
+        res = verifier.verify_file(unadopted)
+        self.assertTrue(res.ok)
+
+        report = validate_wiki(
+            self.root,
+            check_orphans=False,
+            check_evidence=True,
+            evidence_dir=self.evidence_dir,
+        )
+        self.assertEqual(report.evidence.unexplained_orphan_count, 1)
+        self.assertTrue(
+            any("[E2]" in w and "unadopted_memo.txt" in w for w in report.warnings)
+        )
+
     def test_arxiv_evidence_present_and_verified(self):
         bare_id = "2401.12345"
         self._create_arxiv_evidence(bare_id)
