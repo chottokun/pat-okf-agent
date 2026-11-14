@@ -276,6 +276,24 @@ uv run okf context mywiki "アモルファス クレーム" --phases
 Phase 3 `< 4,000`（`--phases` で各フェーズを出力）。`--backend sqlite` を
 指定すると Pattern B の FTS5 を起点検索に使います。
 
+### 4.3 リンク到達性診断（links）
+
+`okf links` は概念グラフのリンク到達性・被参照状況を検査し、客観的な事実のみを返す読み取り専用コマンドです（常に終了コード `0` で、欠落があっても失敗扱いにはしません）。
+
+```bash
+# 被参照 0 件（zero_inbound）、行き止まり（zero_outbound）、厳密な孤立ノード、弱連結成分を確認
+uv run okf links mywiki --json
+
+# 特定の起点概念から到達不能なノートを一覧表示（--from は複数回指定可）
+uv run okf links mywiki --from index-hub --direction out --json
+
+# BUILDLOG.md / SUMMARY.md 等の管理ノートもグラフに含めて集計
+uv run okf links mywiki --include-admin
+```
+
+- **既定の挙動 (`--no-admin`)**: `okf search` と同様に `BUILDLOG.md` や `SUMMARY.md` 等の管理ノートを除外して集計します（管理ノートからの参照によって概念間のリンク欠落が隠れるのを防ぐため）。
+- **出力される主な事実**: `isolated`（出・入ともに 0 件）、`zero_inbound`（他ノードからの被参照が 0 件）、`zero_outbound`（他ノードへの発リンクが 0 件）、`components`（弱連結成分の一覧）、`seed_reachability`（`--from` 指定時の到達可能／到達不能ノード一覧）。
+
 ## 5. 段階的開示（index）
 
 - ルート `index.md`: セクション一覧と件数、直下ノードのみ。
@@ -303,11 +321,11 @@ Phase 3 `< 4,000`（`--phases` で各フェーズを出力）。`--backend sqlit
 
 ### 証跡整合チェック（--check-evidence）
 
-`--check-evidence` を指定すると、各ノートの `sources:` に記載された URL 出典（`web:`, `datasheet:` 等）、内部記録出典（`ops-record:`）、および arXiv 出典（`preprint:arXiv:<id>` 等）に対応する証跡ファイル（`.meta.json` および生本体ファイル）の実在と整合性を検査します。また、未参照スナップショット（孤立）の理由記録状況や墓石（`tombstones`）を監査します。
+`--check-evidence` を指定すると、各ノートの `sources:` に記載された URL 出典（`web:`, `datasheet:` 等）、内部記録・ローカル素材出典（`ops-record:`, `local-file:`）、および arXiv 出典（`preprint:arXiv:<id>` 等）に対応する証跡ファイル（`.meta.json` および生本体ファイル）の実在と整合性を検査します。また、未参照スナップショット（孤立）の理由記録状況や墓石（`tombstones`）を監査します。
 保存先ディレクトリを既定（`data/external/source_verify`）から変更する場合は `--evidence-dir <dir>` で上書きします。
 
 - **URL 出典**: URL からスナップショットキー（`.meta.json` / 本体）を導出し、実在・墓石・本体有無を検査します。
-- **内部記録（`ops-record`）**: 文法 `ops-record:<path>[#<section>] snapshot=<key>` の `snapshot=<key>` 属性から直接 `snapshots/<key>.meta.json` および本体ファイルを解決します（キー内の空文字、`/`、`\`、`..` 等のパス巡回は `invalid_snapshot_key` として `E1`）。さらに `.meta.json` 内の `sha256` フィールドの存在と、本体ファイル（複数ある場合はいずれか1つ）の SHA-256 ハッシュ一致を機械検証します（欠落は `missing_sha256`、不一致は `sha256_mismatch` として `E1`）。
+- **内部記録・ローカル素材（`ops-record` / `local-file`）**: 文法 `<kind>:<id> snapshot=<key>` の `snapshot=<key>` 属性から直接 `snapshots/<key>.meta.json` および本体ファイルを解決します（キー内の空文字、`/`、`\`、`..` 等のパス巡回は `invalid_snapshot_key` として `E1`）。さらに `.meta.json` 内の `sha256` フィールドの存在と、本体ファイル（複数ある場合はいずれか1つ）の SHA-256 ハッシュ一致を機械検証します（欠落は `missing_sha256`、不一致は `sha256_mismatch` として `E1`）。
 - **arXiv 出典**: `<evidence-dir>/arxiv/<safe_id>.xml` とサイドカー `<safe_id>.meta.json` を検査します。両方存在する場合は SHA-256 ハッシュ一致を検証します（不一致・ハッシュ欠落・墓石参照は `E1`）。本体 XML のみ存在しサイドカーが未作成のレガシー証跡は `legacy_no_metadata` として `E4` 警告を出し、`unverifiable` に計上します（破損ではないため `--strict-provenance` でもエラー昇格しません）。本体・メタデータ双方が欠落している場合、またはメタデータのみ存在し本体が欠落している場合は `E1` となります。`okf verify-source` を再実行することでレガシー証跡にサイドカーを補完できます。
 
 ```bash
@@ -729,6 +747,12 @@ uv run okf verify-source "datasheet:https://example.com/aln-datasheet.pdf" \
   --issued 2024-05-01 \
   --json
 
+# ローカル素材（PDF / HTML / TXT / Markdown）の取り込みと証跡スナップショット保存（オフライン動作）
+uv run okf verify-source --file ./materials/report.pdf \
+  --cache-dir mywiki/evidence \
+  --check-claim "180 W/m" \
+  --json
+
 # 不採用スナップショットへの理由記録（孤立トリアージ）
 uv run okf verify-source "https://example.com/unadopted.html" \
   --orphan-reason "数値なし（定性的記述のみ）のため不採用"
@@ -739,6 +763,7 @@ uv run okf verify-source "https://example.com/unadopted.html" \
 - **JaLC / DataCite フォールバック**: Crossref 404 時、`doi.org/ra` で登録機関を判定。JaLC は JaLC REST API、DataCite 等は `doi.org` CSL-JSON content negotiation でメタデータを解決。
 - **arXiv ID**: `export.arxiv.org` の Atom XML から書誌・abstract を抽出。出版版 DOI（`<arxiv:doi>`）があれば警告とメタデータに記録。
 - **Web URL**: `data/external/source_verify/snapshots/` に本文 `<key>.<ext>` と `.meta.json` サイドカー（`sha256`, `extracted_publisher`, `extracted_issued`, `retrieved_at`）をアトミック保存。PDF は `pypdf`（`--extra pdf`）でテキスト抽出し `--check-claim` を検証。
+- **ローカルファイル (`--file`)**: ネットワーク通信を行わず、指定ファイルの SHA-256 を計算し `snapshots/local_<sha256[:16]>.<ext>` へ保全コピー・テキスト抽出・`.meta.json` 生成を行う。`okf_source` は `local-file:<name> retrieved=YYYY-MM-DD via=local-file snapshot=local_<sha256[:16]>` 形式で生成される（`--issued` 指定時のみ `issued=YYYY-MM-DD` が付与）。これは「受け取ったバイト列の同一性」を保全・検査する機構であり、ファイル出所の真偽は保証しない。同一内容・別ファイル名の素材を取り込んだ場合は内容ハッシュにより同じスナップショットを共有し、`.meta.json` の `original_filename` には最初に取り込んだファイル名が保持される。また `.md` 素材は `okf validate` が概念ノートとして誤パースするのを防ぐため `.txt` 拡張子で保存される。
 
 ### 終了コード契約
 - `0` (`verified`): 実在確認および期待条件（`--expect-*`, `--check-claim`）の照合成功。`okf_source` 文字列を生成。
