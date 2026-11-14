@@ -20,6 +20,7 @@ Python 3.12+ toolkit combining cache-first **EPO OPS / EPS** and **USPTO Open Da
 - `scripts/release_smoke.py` — offline CLI/MCP release smoke test
 - `scripts/check_dist.py` — wheel/sdist secret and CLI-content guard
 - `scripts/check_public_repo.py` — tracked-tree secret/path guard
+- `scripts/export_kb_viewer_all.py` — prototype multi-KB viewer JSON bundle exporter (`--base`, `--out`, `--scope`)
 - `docs/epo_api.md` — EPO OPS/EPS usage notes (JP)
 - `docs/uspto_api.md` — USPTO ODP usage notes (JP)
 - `docs/okf_wiki.md` — OKF knowledge base design and CLI/MCP reference (JP)
