@@ -22,6 +22,9 @@ EPO データを取り込みながら、Markdown + YAML frontmatter だけで動
 | 追記ログ | `log.md` に取り込み履歴を残す |
 | 可搬性 | プレーンテキストのみ。ベクトル DB・GPU・独自 SDK 不要 |
 
+> [!NOTE]
+> 第三者がゼロから KB を構築する手順については [kb_building_guide.md](kb_building_guide.md) を、設計判断の理由（なぜ重みをツールに持たせないか、なぜ basis/ops-record の形式か等）、古典的検索の完成到達点、および運用上の注意点については [design_rationales.md](design_rationales.md) を参照してください。
+
 ### ディレクトリ例
 
 ```text

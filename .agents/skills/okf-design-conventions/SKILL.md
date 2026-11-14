@@ -75,7 +75,7 @@ snapshots).
   words, title-derived abbreviations and formal variants, the concept slug
   itself, explicit `tier_a_tags`, and namespaced classification tags such as
   `strand:<name>` in kb-ai-research.
-- Tier B: free descriptive tags; variation is acceptable.
+- Tier B: free descriptive tags; variation is acceptable. **Avoid standalone generic category words** (e.g. `エージェント`, `検索`, `推論` in Japanese/bi-gram-indexed KBs) because tags receive high field weight (15 pts per matched token/bi-gram) and generic tags can hijack Top-1 search rankings from existing sibling concepts; prefer specific method, system, or mechanism names instead.
 - Tag collisions are facts reported for post-batch cleanup (see
   kb-batch-discipline); they are never selection-time failures and are never
   silenced at write time.

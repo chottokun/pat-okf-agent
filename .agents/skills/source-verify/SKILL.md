@@ -74,11 +74,14 @@ uv run okf verify-source "https://example.com/unadopted.html" \
 uv run okf validate <wiki> --strict-provenance --check-evidence --evidence-dir <wiki>/evidence --json
 ```
 
-### Exit Codes
+### Exit Codes & JSON Contract
 
-- `0` (`verified`): Source confirmed and claims matched. Agent inspects `metadata.publisher` and records the resulting `okf_source` string in the note's YAML frontmatter `sources:` list.
-- `1` (`not_found` / `mismatch` / `unverified`): Verification failed (missing ID, title/author/year mismatch, paywalled, or claim not in abstract/body). **Do not cite this source**.
-- `2` (`error`): Rate limit, network error, or invalid arguments. Pause and wait before retrying. Exception: during a batch, kb-batch-discipline's Hard Constraint 4 governs - a persistent HTTP 429 or ledger HTTP 403 (exit 2) stops network calls immediately and closes the batch partially. Invalid-argument errors are never retried; fix the arguments.
+- `0` (`verified`): Source confirmed and claims matched. Agent inspects `metadata.title`, `metadata.url` (includes version suffix for arXiv), `metadata.publisher`, and records the resulting `okf_source` string in the note's YAML frontmatter `sources:` list.
+- `1` (`not_found` / `mismatch` / `unverified` / API error): Verification failed. Note that `okf verify-source` returns exit code `1` for both content/seed failures and runtime/API failures (`cli.py`: `0 if res.ok else 1`). **Automated runners must inspect the `--json` output's `status` field** to distinguish:
+  - Content/seed failure (`status` in `not_found`, `mismatch`): Missing ID or title/author/year/claim mismatch. **Do not cite this source**.
+  - Infrastructure/access failure (`status` in `unverified`, `error`, or non-JSON exception): Paywall, rate limit (HTTP 429), or network/API failure.
+- `2`: CLI argument parsing error (invalid flags/arguments). Fix the arguments before retrying.
+- Exception during a batch: kb-batch-discipline's Hard Constraint 4 governs — a persistent HTTP 429 or ledger HTTP 403 stops network calls immediately and closes the batch partially.
 
 ## Agent Policy Guidelines
 
