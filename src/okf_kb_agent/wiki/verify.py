@@ -25,8 +25,8 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Callable
 
-from pat_okf_agent.epo import RateLimiter, _atomic_write, _safe_name
-from pat_okf_agent.wiki.model import GENRE_VALUES, KNOWN_SOURCE_KINDS, parse_source_entry
+from okf_kb_agent.epo import RateLimiter, _atomic_write, _safe_name
+from okf_kb_agent.wiki.model import GENRE_VALUES, KNOWN_SOURCE_KINDS, parse_source_entry
 
 # Exceptions
 
@@ -737,8 +737,8 @@ class SourceVerifier:
 
     def _get_ua(self) -> str:
         if self.mailto:
-            return f"pat-okf-agent/0.2.0 (research; cache-first; mailto:{self.mailto})"
-        return "pat-okf-agent/0.2.0 (research; cache-first)"
+            return f"okf-kb-agent/0.2.0 (research; cache-first; mailto:{self.mailto})"
+        return "okf-kb-agent/0.2.0 (research; cache-first)"
 
     def _http_request(
         self,

@@ -1,6 +1,6 @@
 # OKF ナレッジベース（KB）構築実践ガイド
 
-本書は、第三者が `pat-okf-agent` を用いて新しい OKF v0.2 Markdown ナレッジベース（KB）をゼロから立ち上げ、証拠に裏付けられた高品質な知識グラフを構築・拡張するための実践手順書です。
+本書は、第三者が `okf-kb-agent` を用いて新しい OKF v0.2 Markdown ナレッジベース（KB）をゼロから立ち上げ、証拠に裏付けられた高品質な知識グラフを構築・拡張するための実践手順書です。
 
 > [!TIP]
 > 本ガイドと併せて、CLI の詳細仕様は [okf_wiki.md](okf_wiki.md)、設計思想の背景や落とし穴の詳細は [design_rationales.md](design_rationales.md) を参照してください。
@@ -12,8 +12,8 @@
 * Python **3.12 以上**（`uv` 推奨）
 * リポジトリのセットアップと動作確認：
   ```bash
-  git clone https://github.com/chottokun/pat-okf-agent.git
-  cd pat-okf-agent
+  git clone https://github.com/chottokun/okf-kb-agent.git
+  cd okf-kb-agent
   uv sync
   uv run python -m unittest discover tests
   ```

@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from pat_okf_agent.wiki.search import (
+from okf_kb_agent.wiki.search import (
     BackendUnavailable,
     LocalSearchBackend,
     pattern_for,
@@ -123,9 +123,9 @@ class LocalSearchTests(unittest.TestCase):
         self.assertIn("syn_target.md", [h.node for h in hits])
 
     def test_ripgrep_candidates_are_used_with_fallback(self):
-        with patch("pat_okf_agent.wiki.search.shutil.which",
+        with patch("okf_kb_agent.wiki.search.shutil.which",
                    return_value="/usr/bin/rg"), patch(
-                       "pat_okf_agent.wiki.search.subprocess.run",
+                       "okf_kb_agent.wiki.search.subprocess.run",
                        return_value=subprocess.CompletedProcess(
                            [], 0, stdout="./a.md\n", stderr="")) as run:
             hits = LocalSearchBackend(

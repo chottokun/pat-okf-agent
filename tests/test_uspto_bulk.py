@@ -1,6 +1,6 @@
 """Offline tests for the USPTO bulk download / grant XML parsing module.
 
-TDD contract for ``pat_okf_agent.uspto_bulk``:
+TDD contract for ``okf_kb_agent.uspto_bulk``:
 - ODP public/authenticated file URL construction
 - streaming download with length verification and 503 retry
 - ZIP extraction with path-traversal protection
@@ -16,7 +16,7 @@ import urllib.error
 import zipfile
 from pathlib import Path
 
-from pat_okf_agent.uspto_bulk import (
+from okf_kb_agent.uspto_bulk import (
     BulkError,
     download,
     download_year,

@@ -8,8 +8,8 @@ import unittest
 import urllib.parse
 from pathlib import Path
 
-from pat_okf_agent.wiki.qdrant_backend import QdrantBackend
-from pat_okf_agent.wiki.search import BackendUnavailable, get_backend
+from okf_kb_agent.wiki.qdrant_backend import QdrantBackend
+from okf_kb_agent.wiki.search import BackendUnavailable, get_backend
 
 
 def write(root: Path, rel: str, meta: str, body: str = "") -> Path:

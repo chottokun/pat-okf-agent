@@ -2,14 +2,14 @@
 
 The default transport speaks newline-delimited JSON-RPC 2.0 over stdio.  An
 optional stdlib HTTP transport is provided by
-:mod:`pat_okf_agent.wiki.mcp_http`.  It has no third-party dependencies.
+:mod:`okf_kb_agent.wiki.mcp_http`.  It has no third-party dependencies.
 
 Run with::
 
     uv run okf-mcp --root .
     uv run okf-mcp --root . --transport http --port 8765
 
-The server exposes the contracts in :mod:`pat_okf_agent.wiki.tooling`.
+The server exposes the contracts in :mod:`okf_kb_agent.wiki.tooling`.
 """
 from __future__ import annotations
 

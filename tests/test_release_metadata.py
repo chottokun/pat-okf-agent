@@ -6,8 +6,8 @@ import unittest
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
-import pat_okf_agent
-from pat_okf_agent.wiki import mcp_server
+import okf_kb_agent
+from okf_kb_agent.wiki import mcp_server
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -20,11 +20,11 @@ class ReleaseMetadataTests(unittest.TestCase):
         lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
         locked = next(
             package["version"] for package in lock["package"]
-            if package["name"] == "pat-okf-agent")
-        self.assertEqual(pat_okf_agent.__version__, expected)
+            if package["name"] == "okf-kb-agent")
+        self.assertEqual(okf_kb_agent.__version__, expected)
         self.assertEqual(mcp_server.SERVER_VERSION, expected)
         try:
-            installed = version("pat-okf-agent")
+            installed = version("okf-kb-agent")
         except PackageNotFoundError:
             installed = expected
         self.assertEqual(installed, expected)

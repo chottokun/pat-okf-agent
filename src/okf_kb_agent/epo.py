@@ -15,10 +15,10 @@ credential handling, rate limiting, cache layout and response parsing:
 
 The module is deliberately usable both as a library and from the command line::
 
-    python -m pat_okf_agent.epo check
-    python -m pat_okf_agent.epo search 'pa="EXAMPLE CORP" and ti="alloy"'
-    python -m pat_okf_agent.epo biblio WO9999999A1
-    python -m pat_okf_agent.epo eps-claims EP9999999B1
+    python -m okf_kb_agent.epo check
+    python -m okf_kb_agent.epo search 'pa="EXAMPLE CORP" and ti="alloy"'
+    python -m okf_kb_agent.epo biblio WO9999999A1
+    python -m okf_kb_agent.epo eps-claims EP9999999B1
 
 Fair-use defaults: one token per 20 minutes, at least 3 s between OPS requests,
 all successful responses cached on disk, and no credentials in tracked files.
@@ -59,7 +59,7 @@ DEFAULT_TOKEN_URL = "https://ops.epo.org/3.2/auth/accesstoken"
 LEGACY_TOKEN_URL = "https://ops.epo.org/3.2/auth/accesstoken"
 EPS_ROOT = "https://data.epo.org/publication-server/rest/v1.2"
 DEFAULT_USER_AGENT = (
-    f"pat-okf-agent/{__version__} (research; non-commercial; "
+    f"okf-kb-agent/{__version__} (research; non-commercial; "
     "EPO OPS free plan; cache-first)"
 )
 DEFAULT_SLEEP_S = 3.0
@@ -1211,7 +1211,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(
-        prog="python -m pat_okf_agent.epo",
+        prog="python -m okf_kb_agent.epo",
         description="Shared EPO OPS / Publication Server client")
     parser.add_argument("--credentials", default=None,
                         help="OPS credentials JSON (default: .secrets/ops_credentials.json)")

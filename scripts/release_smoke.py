@@ -14,7 +14,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
-import pat_okf_agent
+import okf_kb_agent
 
 
 class SmokeFailure(RuntimeError):
@@ -25,7 +25,7 @@ def run_cli(*args: str) -> str:
     command = [
         sys.executable,
         "-m",
-        "pat_okf_agent.wiki.cli",
+        "okf_kb_agent.wiki.cli",
         *args,
     ]
     completed = subprocess.run(
@@ -63,9 +63,9 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="okf-release-smoke-") as raw:
         reported = run_cli("--version").strip()
         try:
-            expected_ver = version("pat-okf-agent")
+            expected_ver = version("okf-kb-agent")
         except PackageNotFoundError:
-            expected_ver = pat_okf_agent.__version__
+            expected_ver = okf_kb_agent.__version__
         expect(reported == expected_ver,
                f"okf --version {reported!r} does not match package metadata")
 

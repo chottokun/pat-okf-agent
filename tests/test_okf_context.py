@@ -8,8 +8,8 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 
-from pat_okf_agent.wiki.cli import main
-from pat_okf_agent.wiki.context import (
+from okf_kb_agent.wiki.cli import main
+from okf_kb_agent.wiki.context import (
     PHASE_TOKEN_BUDGETS,
     ContextResolver,
     clip_to_tokens,

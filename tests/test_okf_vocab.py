@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 import tempfile
 
-from pat_okf_agent.wiki.vocab import (
+from okf_kb_agent.wiki.vocab import (
     build_vocab,
     damerau_levenshtein_distance,
     suggest_correction,

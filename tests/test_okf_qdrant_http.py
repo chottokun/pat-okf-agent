@@ -20,10 +20,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import StringIO
 from pathlib import Path
 
-from pat_okf_agent.wiki.cli import main
-from pat_okf_agent.wiki.embeddings import GemmaEmbedder, HttpEmbedder
-from pat_okf_agent.wiki.mcp_http import make_server
-from pat_okf_agent.wiki.qdrant_backend import QdrantBackend
+from okf_kb_agent.wiki.cli import main
+from okf_kb_agent.wiki.embeddings import GemmaEmbedder, HttpEmbedder
+from okf_kb_agent.wiki.mcp_http import make_server
+from okf_kb_agent.wiki.qdrant_backend import QdrantBackend
 
 
 def write(root: Path, rel: str, meta: str, body: str = "") -> Path:

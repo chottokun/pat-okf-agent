@@ -6,11 +6,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pat_okf_agent.wiki.search import (
+from okf_kb_agent.wiki.search import (
     LocalSearchBackend,
     SearchHit,
 )
-from pat_okf_agent.wiki.synonyms import ExpandedSearchBackend, SynonymIndex
+from okf_kb_agent.wiki.synonyms import ExpandedSearchBackend, SynonymIndex
 
 
 def write_doc(root: Path, rel: str, meta: str, body: str = "") -> Path:
@@ -265,7 +265,7 @@ class BreakdownU2Tests(unittest.TestCase):
     def test_cli_text_output_unchanged(self):
         import io
         from unittest.mock import patch
-        from pat_okf_agent.wiki.cli import main
+        from okf_kb_agent.wiki.cli import main
 
         buf = io.StringIO()
         with patch("sys.stdout", buf):
@@ -297,7 +297,7 @@ class BreakdownU3Tests(unittest.TestCase):
         self.syn_index = SynonymIndex(groups=(("aluminum", "al"),))
 
     def test_eval_synonyms_failure_detail(self):
-        from pat_okf_agent.wiki.synonyms import evaluate_synonyms
+        from okf_kb_agent.wiki.synonyms import evaluate_synonyms
 
         # Query 1: success (matches concepts/copper.md)
         # Query 2: failure (unrelated expected or unretrieved)

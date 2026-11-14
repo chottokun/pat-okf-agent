@@ -8,13 +8,13 @@ from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 
-from pat_okf_agent.wiki.cli import main
-from pat_okf_agent.wiki.search import (
+from okf_kb_agent.wiki.cli import main
+from okf_kb_agent.wiki.search import (
     LocalSearchBackend,
     SearchHit,
     attach_link_counts,
 )
-from pat_okf_agent.wiki.tooling import dispatch_tool
+from okf_kb_agent.wiki.tooling import dispatch_tool
 
 
 def write_doc(root: Path, rel: str, meta: str, body: str = "") -> Path:

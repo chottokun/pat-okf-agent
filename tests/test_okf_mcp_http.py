@@ -8,8 +8,8 @@ import threading
 import unittest
 from pathlib import Path
 
-from pat_okf_agent.wiki.mcp_http import make_server
-from pat_okf_agent.wiki.mcp_server import main
+from okf_kb_agent.wiki.mcp_http import make_server
+from okf_kb_agent.wiki.mcp_server import main
 
 
 def write(root: Path, rel: str, text: str) -> Path:

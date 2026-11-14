@@ -3,7 +3,7 @@
 USPTO の特許（出願・特許ファイルラッパー）データを ODP API 経由で取得する共有
 モジュールです。`epo.py` と同じ「キャッシュファースト・低頻度・検証付き」の設計です。
 
-- 実装: `src/pat_okf_agent/uspto.py`
+- 実装: `src/okf_kb_agent/uspto.py`
 - テスト: `tests/test_uspto_api.py`（11件・オフライン）
 - エンドポイント: `https://api.uspto.gov/api/v1`（Patent File Wrapper）
 
@@ -43,7 +43,7 @@ export USPTO_RATE_STATE=/path/to/uspto_rate_state.json   # "" でプロセス間
 ## 2. ライブラリ利用
 
 ```python
-from pat_okf_agent.uspto import UsptoClient, parse_data_bag
+from okf_kb_agent.uspto import UsptoClient, parse_data_bag
 
 client = UsptoClient()
 res = client.search("applicationMetaData.inventionTitle:graphene", limit=10)
@@ -123,7 +123,7 @@ uv run uspto parse ipg240604.zip --claims
 ライブラリ:
 
 ```python
-from pat_okf_agent.uspto_bulk import (
+from okf_kb_agent.uspto_bulk import (
     product_file_url, download, extract_zip, parse_grant_xml, iter_grant_documents,
 )
 url = product_file_url("PTGRXML-SPLT", 2024, "ipg240604", "18999999_12000000.xml")
@@ -161,8 +161,8 @@ uv run uspto year PTGRXML 2024 -o data/external/uspto/2024
 ライブラリ:
 
 ```python
-from pat_okf_agent.uspto import UsptoClient
-from pat_okf_agent.uspto_bulk import product_files, download_year
+from okf_kb_agent.uspto import UsptoClient
+from okf_kb_agent.uspto_bulk import product_files, download_year
 
 client = UsptoClient()
 files = product_files(client, "PTGRXML", year=2024)      # 期間指定で列挙

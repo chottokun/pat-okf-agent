@@ -6,8 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pat_okf_agent.wiki.search import LocalSearchBackend, pattern_for
-from pat_okf_agent.wiki.synonyms import (
+from okf_kb_agent.wiki.search import LocalSearchBackend, pattern_for
+from okf_kb_agent.wiki.synonyms import (
     DEFAULT_EXCLUDE_TAGS,
     ExpandedSearchBackend,
     SynonymIndex,

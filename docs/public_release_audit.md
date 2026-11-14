@@ -21,7 +21,7 @@ push still requires the owner decisions listed at the end.
   longer contains the real EPO publication content used during development.
 - **History policy:** both `main` and `public-release` (plus tag `v0.2.0`) have
   been squashed to a clean single-commit history containing only synthetic
-  examples and the `pat_okf_agent` package name.
+  examples and the `okf_kb_agent` package name.
 - Documentation and generated `AGENTS.md` files use repository-relative paths;
   internal absolute paths into a developer or root home directory fail the
   guard.
@@ -57,7 +57,7 @@ Terms: <https://www.epo.org/en/service-support/ordering/terms-and-conditions/ops
 
 - [ ] Choose a license (`pyproject.toml` currently has no `license` field).
 - [x] Public repository is
-      `https://github.com/chottokun/pat-okf-agent`.
+      `https://github.com/chottokun/okf-kb-agent`.
 - [x] Replaced private `BUNDLE_README.md` with public `README.md` and excluded
       local `plan/` directory via `.gitignore`.
 - [x] Public commit author is `Chottokun

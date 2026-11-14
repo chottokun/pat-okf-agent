@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .frontmatter import FrontmatterError, parse_frontmatter
-from pat_okf_agent.epo import _safe_name
+from okf_kb_agent.epo import _safe_name
 from .model import (
     BASIS_VALUES,
     KNOWN_SOURCE_KINDS,
