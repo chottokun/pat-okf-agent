@@ -11,11 +11,13 @@ def _parse_args():
     ap = argparse.ArgumentParser(description="Export OKF KBs to the viewer JSON bundle (prototype; to be formalized as okf export).")
     ap.add_argument("--base", default=str(Path.home() / "project" / "hermes-agents-quickstart" / "kb"), help="directory containing the KB folders")
     ap.add_argument("--out", default=str(Path.home() / "kb-viewer-data.json"), help="output JSON path")
+    ap.add_argument("--scope", choices=["all", "concepts", "patents"], default="all", help="which collections to export")
     return ap.parse_args()
 
 ARGS = _parse_args()
 SRC = Path(ARGS.base)
 OUT = Path(ARGS.out)
+SCOPE = ARGS.scope
 KBS = [
     ("kb-semiconductor-thermal", "半導体熱材料KB"),
     ("kb-shana-ops", "シャナ運用KB（KB#1）"),
@@ -100,17 +102,19 @@ def export_kb(kb_dir):
                 if slug not in lst: lst.append(slug)
             elif base in concept_slugs and base != slug and base not in links:
                 links.append(base)
+        if SCOPE == "patents":
+            continue
         sources = fm.get("sources") or []
         concepts.append({"slug": slug, "type": fm.get("type"), "title": fm.get("title"), "description": fm.get("description"), "tags": fm.get("tags") or [], "scope": fm.get("scope"), "basis": fm.get("basis"), "sources_count": len(sources), "verified_at": fm.get("verified_at"), "links": links, "body": body})
     patents = []
-    for p in patent_files:
+    for p in patent_files if SCOPE != "concepts" else []:
         fm, _b = parse_note(p)
         patents.append({"slug": p.stem, "title": fm.get("title"), "tags": fm.get("tags") or [], "publication": fm.get("publication"), "related_concepts": patent_to_concepts.get(p.stem, [])})
     groups = []
     syn_path = kb_dir / "synonyms.json"
-    if syn_path.is_file():
+    if SCOPE != "patents" and syn_path.is_file():
         groups = (json.loads(syn_path.read_text(encoding="utf-8")).get("groups") or [])
-    return {"stats": {"concepts": len(concepts), "patents": len(patents), "total_notes": len(concepts) + len(patents), "synonym_groups": len(groups)}, "concepts": concepts, "patents": patents, "synonyms": {"groups": groups}}
+    return {"export_scope": SCOPE, "partial": SCOPE != "all", "stats": {"concepts": len(concepts), "patents": len(patents), "total_notes": len(concepts) + len(patents), "synonym_groups": len(groups)}, "concepts": concepts, "patents": patents, "synonyms": {"groups": groups}}
 
 kbs = []
 for kb_id, label in KBS:
@@ -120,7 +124,7 @@ for kb_id, label in KBS:
     print(kb_id, d["stats"])
 
 semi = kbs[0]
-data = {"generated_at": datetime.now(timezone(timedelta(hours=9))).isoformat(timespec="seconds"), "kb": semi["id"], "stats": semi["stats"], "concepts": semi["concepts"], "patents": semi["patents"], "synonyms": semi["synonyms"], "kbs": kbs}
+data = {"export_scope": SCOPE, "partial": SCOPE != "all", "generated_at": datetime.now(timezone(timedelta(hours=9))).isoformat(timespec="seconds"), "kb": semi["id"], "stats": semi["stats"], "concepts": semi["concepts"], "patents": semi["patents"], "synonyms": semi["synonyms"], "kbs": kbs}
 OUT.write_text(json.dumps(data, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
 print("bytes", OUT.stat().st_size)
 print("fallbacks", FALLBACKS)
