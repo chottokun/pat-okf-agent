@@ -10,6 +10,7 @@ from pathlib import Path
 from .. import __version__
 from ..epo import EpoError
 from .candidate import CandidateChecker
+from .claims import extract_claims
 from .context import ContextResolver
 from .evolution import (
     analyse_flows,
@@ -412,6 +413,35 @@ def _parser() -> argparse.ArgumentParser:
         help="which collections to export (default: all)",
     )
     p_export.add_argument("--json", action="store_true", help="output summary as JSON when --out is given")
+
+    p_claims = sub.add_parser(
+        "claims",
+        help="extract and deterministically sample numeric claims from concept notes",
+    )
+    p_claims.add_argument("dir", help="wiki root directory")
+    p_claims.add_argument(
+        "--sample",
+        type=int,
+        default=None,
+        help="return N deterministically shuffled claims (default: all)",
+    )
+    p_claims.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="random seed for sampling (default: 0)",
+    )
+    p_claims.add_argument(
+        "--note",
+        action="append",
+        default=None,
+        help="filter by concept slug (repeatable)",
+    )
+    p_claims.add_argument(
+        "--json",
+        action="store_true",
+        help="emit JSON (the default; kept for symmetry)",
+    )
 
     return parser
 
@@ -1146,6 +1176,20 @@ def _dispatch(args: argparse.Namespace) -> int:
                 scope=args.scope,
             )
             print(json.dumps(bundle, ensure_ascii=False, indent=1, default=str))
+        return 0
+
+    if args.command == "claims":
+        wiki = Path(args.dir)
+        if not wiki.exists() or not wiki.is_dir():
+            print(f"error: wiki root directory not found: {args.dir}", file=sys.stderr)
+            return 1
+        result = extract_claims(
+            wiki,
+            sample=args.sample,
+            seed=args.seed,
+            notes=args.note,
+        )
+        print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
         return 0
 
     return 2
