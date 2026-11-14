@@ -820,8 +820,8 @@ uv run okf search examples/wiki "クレーム" --backend sqlite \
   `type`/`scope` を付けた Markdown を生成すれば同じグラフに載ります。
   USPTO → OKF の自動インジェスタは未接続です（今回の対象外）。
 - 複数 KB をビューア向け JSON バンドルへまとめる汎用 `okf export` CLI は未実装です
-  （現在はローカル試作スクリプト `scripts/export_kb_viewer_all.py --base <dir> --out <path>`
-  を先行プロトタイプとして運用しています）。
+  （現在はプロトタイプスクリプト `scripts/export_kb_viewer_all.py --base <dir> --out <path> [--scope all|concepts|patents]`
+  を先行運用しています）。
 - 大規模化したら `okf stats` と `okf eval-synonyms` の推奨を目安に、
   B/C へ明示的に移行してください。
 

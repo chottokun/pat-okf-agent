@@ -114,7 +114,7 @@
 * **未リンク素テキスト検出（保留）**: 外部の作業用バッチランナー側で先に `LinkScan` の実装・運用実績を積み、全 KB 共通の読み取り専用機能（`okf links --unlinked` 等）として有用性が確定した段階で本流への昇格を判断する。
 
 ### 4.4 KB ビューア向け JSON エクスポート（`scripts/export_kb_viewer_all.py` → `okf export` 正式化）
-* **現状（ローカルプロトタイプ）**: 複数 KB（`concepts/*.md`、`patents/*.md`、`synonyms.json`、統計件数）を単一のビューア用 JSON バンドルへ書き出す試作スクリプトとして `--base <kb-base-dir>` / `--out <output.json>` 引数を受け取る運用形が先行している。`PyYAML` がある環境では YAML パーサを使い、`uv run` / `.venv` の標準ライブラリ専用環境では組込みの `fallback_parse()` で同一出力を得る。
+* **現状（ローカルプロトタイプ）**: 複数 KB（`concepts/*.md`、`patents/*.md`、`synonyms.json`、統計件数）を単一のビューア用 JSON バンドルへ書き出す試作スクリプトとして、`--base <kb-base-dir>` / `--out <output.json>` に加えて `--scope {all,concepts,patents}`（既定 `all`）引数を受け取る運用形が先行している。JSON 出力のトップレベルおよび各 KB 要素には `export_scope` / `partial` メタデータが付与され、`--scope patents` 指定時でも `concepts/*.md` を先に走査して `patent_to_concepts`（特許側の `related_concepts` 逆リンク）を維持し、`--scope concepts` では `patents` を、`--scope patents` では `concepts` と `synonyms.json` の読み込みをスキップする。`PyYAML` がある環境では YAML パーサを使い、`uv run` / `.venv` の標準ライブラリ専用環境では組込みの `fallback_parse()` で同一出力を得る。
 * **正式化方針**: 対象 KB リストやラベルの指定仕様（設定ファイルまたは複数ディレクトリ引数）が固まった段階で、汎用・設定駆動の `okf export` サブコマンドとして本体 CLI へ正式化する。
 
 ---
