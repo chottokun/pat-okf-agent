@@ -227,6 +227,34 @@ class TestOkfExport(unittest.TestCase):
             b2 = export_bundle([(kb1, "KB A")], cache_dirs=[ext_cache], generated_at="2026-11-14T15:00:00+09:00")
             self.assertEqual(b1, b2)
 
+    def test_cached_snapshot_without_title_emits_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            kb = Path(tmpdir) / "kb-snap"
+            pdf_url = "https://www.usenix.org/system/files/osdi22-yu.pdf"
+            self._write_concept(
+                kb,
+                "continuous-batching",
+                title="Continuous Batching",
+                sources=[f"web:{pdf_url} retrieved=2026-11-13 via=web genre=paper"],
+            )
+            snap_key = snapshot_key_for_url(pdf_url)
+            snap_dir = kb / "evidence" / "snapshots"
+            snap_dir.mkdir(parents=True, exist_ok=True)
+            (snap_dir / f"{snap_key}.meta.json").write_text(
+                json.dumps({"url": pdf_url, "final_url": pdf_url}),
+                encoding="utf-8",
+            )
+
+            res = export_kb(kb, cache_dirs=[], format_version=2)
+            self.assertEqual(res["stats"]["papers"], 1)
+            paper = res["papers"][0]
+            self.assertTrue(paper["metadata_cached"])
+            self.assertIsNone(paper["title"])
+            self.assertEqual(
+                res["warnings"],
+                [f"missing bibliographic title in local cache for paper: {pdf_url}"],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

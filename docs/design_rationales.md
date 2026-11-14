@@ -113,9 +113,12 @@
 * **到達性診断（実装済み）**: 孤立ノード、被参照 0 件（`zero_inbound`）、発リンク 0 件（`zero_outbound`）、弱連結成分、`--from <seed>` 起点からの到達不能ノートを事実として返す `okf links`（既定 `--no-admin`）を `pat-okf-agent` 本体へ実装済み。
 * **未リンク素テキスト検出（保留）**: 外部の作業用バッチランナー側で先に `LinkScan` の実装・運用実績を積み、全 KB 共通の読み取り専用機能（`okf links --unlinked` 等）として有用性が確定した段階で本流への昇格を判断する。
 
-### 4.4 KB ビューア向け JSON エクスポート（`scripts/export_kb_viewer_all.py` → `okf export` 正式化）
-* **現状（ローカルプロトタイプ）**: 複数 KB（`concepts/*.md`、`patents/*.md`、`synonyms.json`、統計件数）を単一のビューア用 JSON バンドルへ書き出す試作スクリプトとして、`--base <kb-base-dir>` / `--out <output.json>` に加えて `--scope {all,concepts,patents}`（既定 `all`）引数を受け取る運用形が先行している。JSON 出力のトップレベルおよび各 KB 要素には `export_scope` / `partial` メタデータが付与され、`--scope patents` 指定時でも `concepts/*.md` を先に走査して `patent_to_concepts`（特許側の `related_concepts` 逆リンク）を維持し、`--scope concepts` では `patents` を、`--scope patents` では `concepts` と `synonyms.json` の読み込みをスキップする。`PyYAML` がある環境では YAML パーサを使い、`uv run` / `.venv` の標準ライブラリ専用環境では組込みの `fallback_parse()` で同一出力を得る。
-* **正式化方針**: 対象 KB リストやラベルの指定仕様（設定ファイルまたは複数ディレクトリ引数）が固まった段階で、汎用・設定駆動の `okf export` サブコマンドとして本体 CLI へ正式化する。
+### 4.4 KB ビューア向け JSON エクスポート（`scripts/export_kb_viewer_all.py` → `okf export` 正式化済み）
+* **実装された正式仕様**: `okf export <dirs>... --out <file> [--label ...] [--cache-dir ...] [--format-version 1|2] [--scope all|concepts|patents] [--json]` として本体 CLI へ実装済み（既定 `format_version=2`）。
+  * `concepts` は各フォルダ `index.md` のリンク出現順に並び、未掲載ノートはファイル名順で末尾に補完する。
+  * `sources` 行の `genre=` 属性（未指定時は `kind` から `paper` / `patent` / `web` / `other` を自動解決）に基づき、`genre=paper` の出典を `papers[]` として第一級レコード化し、`concepts[].paper_ids`・`papers[].related_concepts` の双方向参照を出力する。
+  * 決定論性とオフライン動作を保つため、書誌解決はローカルの `evidence/` とキャッシュディレクトリのみを参照し、未キャッシュやタイトル欠落の論文は最小レコード（`title: null`）＋ `warnings` として明示する。
+* **移行互換**: `format_version=1` および `--scope`（`all` / `concepts` / `patents`）により先行プロトタイプ（`scripts/export_kb_viewer_all.py`）との後方互換を維持している。
 
 ---
 

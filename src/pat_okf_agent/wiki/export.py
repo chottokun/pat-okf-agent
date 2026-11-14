@@ -279,18 +279,22 @@ def _resolve_paper_record(
         resolved = _resolve_snapshot_metadata(entry, search_caches, fallback_issued)
 
     if resolved is not None:
+        title = resolved.get("title") or None
+        warning = None
+        if title is None:
+            warning = f"missing bibliographic title in local cache for paper: {entry.id}"
         return {
             "id": entry.id,
             "kind": entry.kind,
             "genre": "paper",
-            "title": resolved.get("title"),
+            "title": title,
             "authors": resolved.get("authors", []),
             "year": resolved.get("year"),
             "issued": resolved.get("issued"),
             "venue": resolved.get("venue"),
             "url": resolved.get("url") or default_url,
             "metadata_cached": True,
-        }, None
+        }, warning
 
     warning = f"missing local metadata cache for paper: {entry.id}"
     return {
