@@ -80,4 +80,5 @@ In addition to the Staged Delegation & Audit Protocol in the SKILL.md:
 - No version mix-ups (arXiv version numbers; arXiv vs. conference version).
 - No claim exceeds the abstract's scope without full-text confirmation; the declared grounding depth matches reality.
 - The link rules above are followed: no links to not-yet-created concepts; no missed conversions in the end-of-stage pass.
-- Strand tag values show no spelling drift.
+- Strand tag values show no spelling drift, and Tier B free tags avoid standalone generic category words (see `okf-design-conventions` section 4).
+- When `eval_queries.json` exists, re-run the search smoke test across **all** queries (existing + new) to confirm zero Top-1 regressions caused by new notes or tags.
