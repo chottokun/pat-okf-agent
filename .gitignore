@@ -34,3 +34,9 @@ plan/
 
 # Local agent work products (KB builds and run logs, not published)
 .kb-*
+
+# Local verification artifacts and runtime state
+.verify-smoke*
+probe-*.log
+source_verify_rate_state.json
+opencode.json
