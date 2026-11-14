@@ -113,6 +113,10 @@
 * **到達性診断（実装済み）**: 孤立ノード、被参照 0 件（`zero_inbound`）、発リンク 0 件（`zero_outbound`）、弱連結成分、`--from <seed>` 起点からの到達不能ノートを事実として返す `okf links`（既定 `--no-admin`）を `pat-okf-agent` 本体へ実装済み。
 * **未リンク素テキスト検出（保留）**: 外部の作業用バッチランナー側で先に `LinkScan` の実装・運用実績を積み、全 KB 共通の読み取り専用機能（`okf links --unlinked` 等）として有用性が確定した段階で本流への昇格を判断する。
 
+### 4.4 KB ビューア向け JSON エクスポート（`scripts/export_kb_viewer_all.py` → `okf export` 正式化）
+* **現状（ローカルプロトタイプ）**: 複数 KB（`concepts/*.md`、`patents/*.md`、`synonyms.json`、統計件数）を単一のビューア用 JSON バンドルへ書き出す試作スクリプトとして `--base <kb-base-dir>` / `--out <output.json>` 引数を受け取る運用形が先行している。`PyYAML` がある環境では YAML パーサを使い、`uv run` / `.venv` の標準ライブラリ専用環境では組込みの `fallback_parse()` で同一出力を得る。
+* **正式化方針**: 対象 KB リストやラベルの指定仕様（設定ファイルまたは複数ディレクトリ引数）が固まった段階で、汎用・設定駆動の `okf export` サブコマンドとして本体 CLI へ正式化する。
+
 ---
 
 ## 5. 外部記憶・監査記録の分離方針（Records Pointer）
