@@ -23,6 +23,8 @@ Python 3.12+ toolkit combining cache-first **EPO OPS / EPS** and **USPTO Open Da
 - `docs/epo_api.md` — EPO OPS/EPS usage notes (JP)
 - `docs/uspto_api.md` — USPTO ODP usage notes (JP)
 - `docs/okf_wiki.md` — OKF knowledge base design and CLI/MCP reference (JP)
+- `docs/kb_building_guide.md` — 第三者向け OKF ナレッジベース構築実践ガイド (JP)
+- `docs/design_rationales.md` — 設計判断の理由・古典的検索の完成・運用の落とし穴・開発メモ (JP)
 - `docs/release_checklist.md` — release gates, smoke tests and known limitations
 - `docs/public_release_audit.md` — public-push audit and owner checklist
 
