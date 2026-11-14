@@ -36,6 +36,8 @@ uv run okf init my-kb --skills-dir .agents/skills
 | **論文中心型** | arXiv プレプリント、学会論文（DOI） | KB 内 `evidence/arxiv/` ＋ `evidence/fulltext/` | AI/CS 研究、学術サーベイ |
 | **運用知見・手順型** | 内部手順書、設定・実験ログ（`ops-record:`） | KB 内 `evidence/*.txt` ＋ `.meta.json` | チーム・システム運用ノウハウ |
 
+> いずれの型でも、利用者手元のローカル素材（PDF・仕様メモ等）を `okf verify-source --file` で `local-file:` 出典として `<wiki>/evidence/snapshots/` に保全取り込みできます。
+
 ---
 
 ## 2. 候補選定と重複・タグ衝突の事前チェック
@@ -65,12 +67,23 @@ export OKF_VERIFY_RATE_STATE=/tmp/my_kb_rate_state.json
 uv run okf verify-source "arXiv:2309.06180" \
   --cache-dir my-kb/evidence \
   --json
+
+# 例: 利用者手元のローカル素材（PDF / HTML / TXT / Markdown）の取り込み（オフライン完結）
+uv run okf verify-source --file ./materials/report.pdf \
+  --cache-dir my-kb/evidence \
+  --check-claim "180 W/m" \
+  --json
 ```
 
 ### 確認すべきポイント
 1. **Identity の確認**: `--json` 出力の `metadata.title` と `metadata.url`（バージョン付き）を確認し、意図した論文・版と一致していることを確かめます。誤った ID を指定していないかを執筆前にここで水際防止できます。
-2. **`okf_source` の転記**: 出力された `okf_source` 文字列（例: `"preprint:arXiv:2309.06180 issued=2023-09-12 retrieved=2026-11-14 via=arxiv"`）をそのままノートの `sources:` に使います。
-3. **全文スナップショットの保全（論文中心型）**: 要旨だけでなく本文の数値や限界を扱う場合は、HTML/PDF から抽出した全文 `.txt` と sha256 を記録した `.meta.json` を `my-kb/evidence/fulltext/` 等に保存してください。
+2. **`okf_source` の転記**: 出力された `okf_source` 文字列（例: `"preprint:arXiv:2309.06180 issued=2023-09-12 retrieved=2026-11-14 via=arxiv"` やローカル素材 `"local-file:report.pdf retrieved=2026-11-14 via=local-file snapshot=local_<sha256先頭16桁>"`）をそのままノートの `sources:` に使います（`--issued YYYY-MM-DD` を付けた場合のみ `issued=` が含まれ、角括弧は入りません）。
+3. **ローカル素材取り込み（`--file`）の仕様と境界**:
+   * `verify-source --file` が保証するのは「受け取ったバイト列の同一性（SHA-256）」であり、ファイル出所の真偽は保証しません。
+   * `.md` / `.markdown` ファイルを渡した場合でも、`snapshots/` には `.txt` 拡張子で保全されるため `okf validate` に誤パースされません（元ファイル名・元拡張子は `.meta.json` に保持）。
+   * 内容が同一でファイル名が異なる素材を重ねて渡した場合、内容ハッシュ `local_<sha256[:16]>` を共有し、`.meta.json` の `original_filename` には最初に取り込んだファイル名が残ります。
+   * 不採用にしたローカル素材にも `uv run okf verify-source --file <path> --cache-dir my-kb/evidence --orphan-reason "<理由>"` で孤立理由を記録できます。
+4. **全文スナップショットの保全（論文中心型）**: 要旨だけでなく本文の数値や限界を扱う場合は、HTML/PDF から抽出した全文 `.txt` と sha256 を記録した `.meta.json` を `my-kb/evidence/fulltext/` 等に保存してください。
    > [!CAUTION]
    > **`evidence/` 配下に `.md` ファイルを置かないでください。** `okf validate` は KB 配下のすべての `.md` を概念ノートとしてパースするため、証跡やメモの拡張子は必ず `.txt` や `.json` にしてください。
 
@@ -119,6 +132,10 @@ uv run okf validate my-kb \
 # 3. 索引の鮮度チェックと統計確認
 uv run okf index my-kb --check
 uv run okf stats my-kb --json
+
+# 4. リンク到達性・被参照 0 件概念・孤立クラスタの診断（事実確認）
+uv run okf links my-kb --json
+uv run okf links my-kb --from <起点概念slug>
 ```
 
 ### 合格基準
@@ -127,6 +144,15 @@ uv run okf stats my-kb --json
 
 > [!WARNING]
 > `--evidence-dir` を省略すると、`okf validate` はデフォルトの `data/external/source_verify` を参照し、KB 内部の `evidence/` を持つ KB では全件 missing 扱いになります。**必ず `--evidence-dir <KB>/evidence` を明示してください。**
+
+### リンク完全性の継続診断（`okf links`）
+`okf validate` はリンク切れと「入出力ともに 0 件の完全孤立ノード」のみを検査するため、発リンクはあるが他から一切参照されていない概念（`zero_inbound`）や分断された小クラスタは見落とされます。
+`okf links` は読み取り専用（常に終了コード `0`・管理ノートを除外する `--no-admin` 既定）で以下の客観的事実を返すため、各バッチ完了時に確認して相互リンクを補ってください：
+* `isolated`: 入リンク・出リンクともに 0 件のノード一覧
+* `zero_inbound`: 他ノートからの被参照が 0 件のノード一覧（孤立かハブ起点かを `is_isolated` で判別可能）
+* `zero_outbound`: 他ノートへの発リンクが 0 件の行き止まりノード一覧
+* `components`: 弱連結成分の分割一覧（`component_count > 1` なら孤立した島がある）
+* `seed_reachability`: `--from <seed>` 指定時の、起点から辿れないノード一覧（`unreachable`）
 
 ### 検索品質の維持（`eval_queries.json`）
 KB が 10 概念以上に育ったら、KB 直下に `eval_queries.json`（代表的な検索クエリと期待される 1 位ノートのペア）を置き、新規概念を追加するたびに `okf search my-kb "<query>" --limit 5 --json` で **既存の検索順位が落ちていないか（回帰テスト）** を確認してください。順位低下が起きた場合は、`--json` 出力の `breakdown` で原因フィールドを特定してタグや説明文を調整します。
