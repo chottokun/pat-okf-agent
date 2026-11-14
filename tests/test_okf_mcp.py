@@ -7,7 +7,7 @@ import unittest
 from io import StringIO
 from pathlib import Path
 
-from pat_okf_agent.wiki.mcp_server import (
+from okf_kb_agent.wiki.mcp_server import (
     PROTOCOL_VERSION,
     handle_message,
     serve,

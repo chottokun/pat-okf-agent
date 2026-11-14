@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pat_okf_agent.wiki.index import plan_indexes, write_indexes
+from okf_kb_agent.wiki.index import plan_indexes, write_indexes
 
 
 def write(root: Path, rel: str, meta: str, body: str = "") -> Path:

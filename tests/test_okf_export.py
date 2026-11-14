@@ -6,9 +6,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pat_okf_agent.wiki.cli import main as okf_main
-from pat_okf_agent.wiki.export import export_bundle, export_kb
-from pat_okf_agent.wiki.verify import snapshot_key_for_url
+from okf_kb_agent.wiki.cli import main as okf_main
+from okf_kb_agent.wiki.export import export_bundle, export_kb
+from okf_kb_agent.wiki.verify import snapshot_key_for_url
 
 
 class TestOkfExport(unittest.TestCase):

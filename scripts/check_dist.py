@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 FORBIDDEN_NAMES = {".secrets", ".git", "__pycache__", "plan"}
-REQUIRED_SUFFIX = "pat_okf_agent/wiki/cli.py"
+REQUIRED_SUFFIX = "okf_kb_agent/wiki/cli.py"
 
 
 def archive_members(path: Path) -> list[str]:

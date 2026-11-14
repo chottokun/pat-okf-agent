@@ -9,8 +9,8 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-import pat_okf_agent
-from pat_okf_agent.wiki.cli import main
+import okf_kb_agent
+from okf_kb_agent.wiki.cli import main
 
 
 def write(root: Path, rel: str, text: str) -> Path:
@@ -44,7 +44,7 @@ class CliTests(unittest.TestCase):
         with redirect_stdout(out), self.assertRaises(SystemExit) as ctx:
             main(["--version"])
         self.assertEqual(ctx.exception.code, 0)
-        self.assertEqual(out.getvalue().strip(), pat_okf_agent.__version__)
+        self.assertEqual(out.getvalue().strip(), okf_kb_agent.__version__)
 
     def test_init_creates_index_log_and_agent_instructions(self):
         skills = Path(self.tmp.name) / "skills"
@@ -424,7 +424,7 @@ class CliTests(unittest.TestCase):
                 return {"indexed": 1, "unchanged": 0, "removed": 0,
                         "points": 1, "dimensions": 4}
 
-        with patch("pat_okf_agent.wiki.cli.get_backend",
+        with patch("okf_kb_agent.wiki.cli.get_backend",
                    return_value=FakeBackend()) as factory:
             code, out, _ = self.run_cli(
                 "qdrant", self.root, "--embedding-url", "http://embed",
@@ -440,7 +440,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("seed not found", err)
 
     def test_verify_source_verified_exit_0_json(self):
-        from pat_okf_agent.wiki.verify import (
+        from okf_kb_agent.wiki.verify import (
             EvidenceRecord,
             SourceMetadata,
             VerificationChecks,
@@ -464,7 +464,7 @@ class CliTests(unittest.TestCase):
             okf_source="paper:10.1111/jace.14748 issued=2017-01-12 retrieved=2026-11-08 via=crossref",
         )
 
-        with patch("pat_okf_agent.wiki.cli.SourceVerifier.verify", return_value=dummy_res):
+        with patch("okf_kb_agent.wiki.cli.SourceVerifier.verify", return_value=dummy_res):
             code, out, err = self.run_cli("verify-source", "paper:10.1111/jace.14748", "--json")
             self.assertEqual(code, 0)
             data = json.loads(out)
@@ -479,7 +479,7 @@ class CliTests(unittest.TestCase):
             self.assertIn("paper:10.1111/jace.14748", out_txt)
 
     def test_verify_source_not_found_or_mismatch_exit_1(self):
-        from pat_okf_agent.wiki.verify import (
+        from okf_kb_agent.wiki.verify import (
             EvidenceRecord,
             SourceMetadata,
             VerificationChecks,
@@ -503,7 +503,7 @@ class CliTests(unittest.TestCase):
             okf_source=None,
         )
 
-        with patch("pat_okf_agent.wiki.cli.SourceVerifier.verify", return_value=mismatch_res):
+        with patch("okf_kb_agent.wiki.cli.SourceVerifier.verify", return_value=mismatch_res):
             code, out, _ = self.run_cli("verify-source", "10.1111/jace.14748", "--expect-year", "1900", "--json")
             self.assertEqual(code, 1)
             data = json.loads(out)
@@ -511,9 +511,9 @@ class CliTests(unittest.TestCase):
             self.assertEqual(data["status"], "mismatch")
 
     def test_verify_source_error_exit_2(self):
-        from pat_okf_agent.wiki.verify import SourceOfflineError
+        from okf_kb_agent.wiki.verify import SourceOfflineError
 
-        with patch("pat_okf_agent.wiki.cli.SourceVerifier.verify", side_effect=SourceOfflineError("cache miss")):
+        with patch("okf_kb_agent.wiki.cli.SourceVerifier.verify", side_effect=SourceOfflineError("cache miss")):
             code, out, err = self.run_cli("verify-source", "10.1111/uncached", "--offline")
             self.assertEqual(code, 2)
             self.assertIn("error: cache miss", err)
@@ -530,7 +530,7 @@ class CliTests(unittest.TestCase):
             snapshots_dir.mkdir(parents=True)
 
             url = "https://example.com/item.html"
-            from pat_okf_agent.wiki.verify import snapshot_key_for_url
+            from okf_kb_agent.wiki.verify import snapshot_key_for_url
             key = snapshot_key_for_url(url)
             meta_path = snapshots_dir / f"{key}.meta.json"
             meta_path.write_text(json.dumps({"url": url, "sha256": "abc"}, indent=2), encoding="utf-8")
@@ -571,7 +571,7 @@ class CliTests(unittest.TestCase):
             snapshots_dir = evidence_dir / "snapshots"
             snapshots_dir.mkdir(parents=True)
 
-            from pat_okf_agent.wiki.verify import snapshot_key_for_url
+            from okf_kb_agent.wiki.verify import snapshot_key_for_url
             key = snapshot_key_for_url(url)
             (snapshots_dir / f"{key}.html").write_bytes(b"content")
             (snapshots_dir / f"{key}.meta.json").write_text(

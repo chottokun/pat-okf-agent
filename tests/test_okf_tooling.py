@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pat_okf_agent.wiki.tooling import (
+from okf_kb_agent.wiki.tooling import (
     TOOL_SPECS,
     ToolError,
     dispatch_tool,

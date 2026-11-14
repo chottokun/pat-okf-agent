@@ -1,5 +1,5 @@
 [project]
-name = "pat-okf-agent"
+name = "okf-kb-agent"
 version = "0.2.0"
 description = "EPO/USPTO patent data access + OKF v0.2 Markdown knowledge base"
 readme = "README.md"
@@ -19,13 +19,13 @@ pdf = [
 ]
 
 [project.scripts]
-epo = "pat_okf_agent.epo:main"
-uspto = "pat_okf_agent.uspto:main"
-okf = "pat_okf_agent.wiki.cli:main"
-okf-mcp = "pat_okf_agent.wiki.mcp_server:main"
+epo = "okf_kb_agent.epo:main"
+uspto = "okf_kb_agent.uspto:main"
+okf = "okf_kb_agent.wiki.cli:main"
+okf-mcp = "okf_kb_agent.wiki.mcp_server:main"
 
 [project.urls]
-Repository = "https://github.com/chottokun/pat-okf-agent"
+Repository = "https://github.com/chottokun/okf-kb-agent"
 
 [build-system]
 requires = ["uv_build>=0.13.3,<0.14"]

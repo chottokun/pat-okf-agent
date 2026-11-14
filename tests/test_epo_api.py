@@ -8,7 +8,7 @@ import unittest
 import urllib.error
 from pathlib import Path
 
-from pat_okf_agent.epo import (
+from okf_kb_agent.epo import (
     EpoApiError,
     EpsClient,
     OpsClient,
@@ -551,13 +551,13 @@ class CredentialTests(unittest.TestCase):
 
 class CliAndRootTests(unittest.TestCase):
     def test_root_is_cwd_not_repo_parent(self):
-        from pat_okf_agent import epo
+        from okf_kb_agent import epo
         self.assertEqual(epo.ROOT, Path.cwd())
 
     def test_cli_error_outputs_to_stderr(self):
         import io
         import sys
-        from pat_okf_agent.epo import main
+        from okf_kb_agent.epo import main
 
         stderr_buf = io.StringIO()
         stdout_buf = io.StringIO()

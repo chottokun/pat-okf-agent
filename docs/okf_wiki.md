@@ -6,7 +6,7 @@ EPO データを取り込みながら、Markdown + YAML frontmatter だけで動
 **Pattern C（ONNX / Qdrant + Gemma embeddings）** を実装しています。
 
 - CLI: `okf`
-- 実装: `src/pat_okf_agent/wiki/`
+- 実装: `src/okf_kb_agent/wiki/`
 - デモ: `examples/wiki/`（合成特許データ + Workflow/Gotcha/Synergy）
 - テスト: `tests/test_okf_*.py`（オフライン）
 - Python: **3.12以上**（CI 3.12/3.13/3.14、推奨3.14）
@@ -51,7 +51,7 @@ wiki/
 ## 2. クイックスタート
 
 ```bash
-cd /path/to/pat-okf-agent
+cd /path/to/okf-kb-agent
 
 # 初期化（索引・ログ・エージェントガイド）
 uv run okf init mywiki \
@@ -477,7 +477,7 @@ exit 1。推奨 Pattern が C でも、バックエンドは自動では切り�
 ### 可逆な検索アダプタ
 
 ```python
-from pat_okf_agent.wiki.search import get_backend
+from okf_kb_agent.wiki.search import get_backend
 
 backend = get_backend("local", "mywiki")       # Pattern A
 backend = get_backend("sqlite", "mywiki")      # Pattern B
@@ -591,8 +591,8 @@ MCP クライアント設定例（OpenCode など）:
   "mcp": {
     "okf": {
       "type": "local",
-      "command": ["uv", "run", "--project", "/absolute/path/to/pat-okf-agent",
-                  "okf-mcp", "--root", "/absolute/path/to/pat-okf-agent"]
+      "command": ["uv", "run", "--project", "/absolute/path/to/okf-kb-agent",
+                  "okf-mcp", "--root", "/absolute/path/to/okf-kb-agent"]
     }
   }
 }

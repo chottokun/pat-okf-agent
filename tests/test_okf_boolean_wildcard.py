@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 import tempfile
 
-from pat_okf_agent.wiki.search import LocalSearchBackend
+from okf_kb_agent.wiki.search import LocalSearchBackend
 
 
 class TestBooleanWildcardSearch(unittest.TestCase):

@@ -5,12 +5,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pat_okf_agent.wiki.context import ContextResolver
-from pat_okf_agent.wiki.search import (
+from okf_kb_agent.wiki.context import ContextResolver
+from okf_kb_agent.wiki.search import (
     LocalSearchBackend,
     get_backend,
 )
-from pat_okf_agent.wiki.sqlite_backend import (
+from okf_kb_agent.wiki.sqlite_backend import (
     SQLiteSearchBackend,
     fts5_available,
 )
@@ -111,7 +111,7 @@ class SQLiteBackendTests(unittest.TestCase):
         self.assertIn("documents", backend.stats())
 
     def test_term_re_supports_greek_and_latin1_supplement(self):
-        from pat_okf_agent.wiki.sqlite_backend import _TERM_RE
+        from okf_kb_agent.wiki.sqlite_backend import _TERM_RE
         self.assertEqual(_TERM_RE.findall("α-olefin"), ["α", "olefin"])
         self.assertEqual(_TERM_RE.findall("Böhm"), ["Böhm"])
 

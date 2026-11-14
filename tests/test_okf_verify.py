@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import unittest
 
-from pat_okf_agent.wiki.model import parse_source_entry
-from pat_okf_agent.wiki.verify import (
+from okf_kb_agent.wiki.model import parse_source_entry
+from okf_kb_agent.wiki.verify import (
     ClassifiedTarget,
     EvidenceRecord,
     SourceApiError,

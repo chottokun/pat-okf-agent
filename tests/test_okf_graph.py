@@ -5,8 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pat_okf_agent.wiki.graph import WikiGraph, build_graph
-from pat_okf_agent.wiki.model import SCOPE_WEIGHTS
+from okf_kb_agent.wiki.graph import WikiGraph, build_graph
+from okf_kb_agent.wiki.model import SCOPE_WEIGHTS
 
 
 def write(root: Path, rel: str, meta: str, body: str = "") -> Path:

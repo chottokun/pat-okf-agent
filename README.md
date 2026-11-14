@@ -1,20 +1,20 @@
-# pat-okf-agent
+# okf-kb-agent
 
 Python 3.12+ toolkit combining cache-first **EPO OPS / EPS** and **USPTO Open Data Portal (ODP)** patent clients with an **OKF v0.2 Markdown knowledge base**, graph traversal, context compiler, and MCP server (`okf-mcp`).
 
 ## Features & Repository Layout
 
-- `src/pat_okf_agent/epo.py` — EPO OPS v3.2 + EPS client and CLI (`epo`; stdlib-only)
-- `src/pat_okf_agent/uspto.py` — USPTO Open Data Portal client and CLI (`uspto`; stdlib-only)
-- `src/pat_okf_agent/uspto_bulk.py` — USPTO bulk product / grant XML downloader & parser
-- `src/pat_okf_agent/wiki/` — OKF v0.2 Markdown knowledge base (Pattern A/B; optional Pattern C)
-- `src/pat_okf_agent/wiki/tooling.py` — deterministic JSON tool contracts + path-bounded dispatcher
-- `src/pat_okf_agent/wiki/mcp_server.py` — MCP server (`okf-mcp`; stdio and HTTP/SSE transports)
-- `src/pat_okf_agent/wiki/mcp_http.py` — stdlib HTTP/SSE transport with loopback/Bearer auth guard
-- `src/pat_okf_agent/wiki/embeddings.py` — HTTP / Gemma embedding adapters
-- `src/pat_okf_agent/wiki/qdrant_backend.py` — Qdrant REST adapter
-- `src/pat_okf_agent/wiki/synonyms.py` — bounded query expansion + synonym evaluation
-- `src/pat_okf_agent/wiki/evolution.py` — deterministic `EvolutionLoop` + non-destructive proposals
+- `src/okf_kb_agent/epo.py` — EPO OPS v3.2 + EPS client and CLI (`epo`; stdlib-only)
+- `src/okf_kb_agent/uspto.py` — USPTO Open Data Portal client and CLI (`uspto`; stdlib-only)
+- `src/okf_kb_agent/uspto_bulk.py` — USPTO bulk product / grant XML downloader & parser
+- `src/okf_kb_agent/wiki/` — OKF v0.2 Markdown knowledge base (Pattern A/B; optional Pattern C)
+- `src/okf_kb_agent/wiki/tooling.py` — deterministic JSON tool contracts + path-bounded dispatcher
+- `src/okf_kb_agent/wiki/mcp_server.py` — MCP server (`okf-mcp`; stdio and HTTP/SSE transports)
+- `src/okf_kb_agent/wiki/mcp_http.py` — stdlib HTTP/SSE transport with loopback/Bearer auth guard
+- `src/okf_kb_agent/wiki/embeddings.py` — HTTP / Gemma embedding adapters
+- `src/okf_kb_agent/wiki/qdrant_backend.py` — Qdrant REST adapter
+- `src/okf_kb_agent/wiki/synonyms.py` — bounded query expansion + synonym evaluation
+- `src/okf_kb_agent/wiki/evolution.py` — deterministic `EvolutionLoop` + non-destructive proposals
 - `.agents/skills/` — project skills (OKF operations, patent ingestion, source verification, batch discipline, skill authoring)
 - `examples/wiki/` — synthetic demo wiki (patents + workflow/gotcha/synergy nodes)
 - `scripts/release_smoke.py` — offline CLI/MCP release smoke test
@@ -110,11 +110,11 @@ See `docs/uspto_api.md` for details.
 
 ```bash
 export PYTHONPATH=src
-python3 -m pat_okf_agent.epo check
-python3 -m pat_okf_agent.epo token
+python3 -m okf_kb_agent.epo check
+python3 -m okf_kb_agent.epo token
 
 python3 - <<'PY'
-from pat_okf_agent.epo import OpsClient, EpsClient
+from okf_kb_agent.epo import OpsClient, EpsClient
 ops = OpsClient()
 print(ops.search('pa="EXAMPLE CORP" and ti="atomiz"').total_count)
 eps = EpsClient()

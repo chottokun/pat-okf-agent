@@ -134,7 +134,7 @@ git commit -m "Initial public release 0.2.0"
 git push origin public-release:main
 
 # Wait for GitHub Actions to pass on 3.12, 3.13 and 3.14.
-git tag -a v0.2.0 -m "pat-okf-agent 0.2.0"
+git tag -a v0.2.0 -m "okf-kb-agent 0.2.0"
 git push origin v0.2.0
 ```
 

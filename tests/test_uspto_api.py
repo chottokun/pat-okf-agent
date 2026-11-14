@@ -1,6 +1,6 @@
 """Offline tests for the USPTO Open Data Portal client (no network).
 
-TDD: these tests define the contract of ``pat_okf_agent.uspto``:
+TDD: these tests define the contract of ``okf_kb_agent.uspto``:
 credential resolution, URL/parameter construction, cache-first behaviour,
 401 guidance, 429 retry, and the conservative result window.
 """
@@ -12,7 +12,7 @@ import unittest
 import urllib.error
 from pathlib import Path
 
-from pat_okf_agent.uspto import (
+from okf_kb_agent.uspto import (
     API_ROOT,
     UsptoApiError,
     UsptoClient,
@@ -190,7 +190,7 @@ class UsptoClientTests(unittest.TestCase):
         self.assertEqual(parse_data_bag({}), [])
 
     def test_offline_without_cache_raises(self):
-        from pat_okf_agent.uspto import UsptoOfflineError
+        from okf_kb_agent.uspto import UsptoOfflineError
         client = UsptoClient(api_key=TOKEN_KEY, cache_dir=self.cache,
                              sleep_s=0, offline=True)
         with self.assertRaises(UsptoOfflineError):

@@ -7,9 +7,9 @@ import unittest
 from datetime import date
 from pathlib import Path
 
-from pat_okf_agent.epo import PublicationRef
-from pat_okf_agent.wiki.ingest import ingest_publication
-from pat_okf_agent.wiki.validate import (
+from okf_kb_agent.epo import PublicationRef
+from okf_kb_agent.wiki.ingest import ingest_publication
+from okf_kb_agent.wiki.validate import (
     STRICT_PROVENANCE_RULES,
     EvidenceReport,
     ValidationReport,
@@ -575,7 +575,7 @@ class TestEvidenceValidation(unittest.TestCase):
         body: bytes | None = b"sample content",
         meta_extra: dict | None = None,
     ) -> tuple[str, Path, Path | None]:
-        from pat_okf_agent.wiki.verify import snapshot_key_for_url
+        from okf_kb_agent.wiki.verify import snapshot_key_for_url
         import json
 
         key = snapshot_key_for_url(url)
@@ -641,7 +641,7 @@ class TestEvidenceValidation(unittest.TestCase):
     ) -> tuple[str, Path | None, Path | None]:
         import hashlib
         import json
-        from pat_okf_agent.epo import _safe_name
+        from okf_kb_agent.epo import _safe_name
 
         stem = _safe_name(bare_id)
         self.arxiv_dir.mkdir(parents=True, exist_ok=True)
@@ -847,7 +847,7 @@ class TestEvidenceValidation(unittest.TestCase):
         self.assertEqual(report.evidence.unexplained_orphan_count, 1)
 
         orphans = {o["key"]: o for o in report.evidence.orphans}
-        from pat_okf_agent.wiki.verify import snapshot_key_for_url
+        from okf_kb_agent.wiki.verify import snapshot_key_for_url
         key_with = snapshot_key_for_url("https://example.com/orphan-with-reason.html")
         key_without = snapshot_key_for_url("https://example.com/orphan-without-reason.html")
         self.assertEqual(orphans[key_with]["orphan_reason"], "数値なしのため不採用")
@@ -1118,7 +1118,7 @@ class TestEvidenceValidation(unittest.TestCase):
         self.assertEqual(report.evidence.unexplained_orphan_count, 0)
 
     def test_local_file_evidence_verified_and_tamper_detected(self):
-        from pat_okf_agent.wiki.verify import SourceVerifier
+        from okf_kb_agent.wiki.verify import SourceVerifier
 
         mat_dir = Path(self.tmp.name) / "materials"
         mat_dir.mkdir()
@@ -1166,7 +1166,7 @@ class TestEvidenceValidation(unittest.TestCase):
         self.assertEqual(report_bad.evidence.missing[0]["reason"], "sha256_mismatch")
 
     def test_local_file_orphan_warning_uses_original_filename(self):
-        from pat_okf_agent.wiki.verify import SourceVerifier
+        from okf_kb_agent.wiki.verify import SourceVerifier
 
         mat_dir = Path(self.tmp.name) / "materials"
         mat_dir.mkdir()

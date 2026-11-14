@@ -6,8 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pat_okf_agent.wiki.onnx_backend import MicroOnnxBackend
-from pat_okf_agent.wiki.search import BackendUnavailable, get_backend
+from okf_kb_agent.wiki.onnx_backend import MicroOnnxBackend
+from okf_kb_agent.wiki.search import BackendUnavailable, get_backend
 
 
 def write(root: Path, rel: str, meta: str, body: str = "") -> Path:

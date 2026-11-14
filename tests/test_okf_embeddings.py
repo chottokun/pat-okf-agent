@@ -5,8 +5,8 @@ import json
 import unittest
 import urllib.request
 
-from pat_okf_agent.wiki.embeddings import GemmaEmbedder, HttpEmbedder
-from pat_okf_agent.wiki.search import BackendUnavailable
+from okf_kb_agent.wiki.embeddings import GemmaEmbedder, HttpEmbedder
+from okf_kb_agent.wiki.search import BackendUnavailable
 
 
 class FakeResponse:

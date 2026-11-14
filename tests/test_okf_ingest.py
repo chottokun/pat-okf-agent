@@ -6,9 +6,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pat_okf_agent.epo import EpoApiError, PublicationRef, SearchResult
-from pat_okf_agent.wiki.frontmatter import parse_frontmatter
-from pat_okf_agent.wiki.ingest import ingest_publication, ingest_query
+from okf_kb_agent.epo import EpoApiError, PublicationRef, SearchResult
+from okf_kb_agent.wiki.frontmatter import parse_frontmatter
+from okf_kb_agent.wiki.ingest import ingest_publication, ingest_query
 
 NOW = "2026-10-29T00:00:00Z"
 LATER = "2026-11-11T09:30:00Z"

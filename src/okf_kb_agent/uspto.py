@@ -19,7 +19,7 @@ result window of 25 records per request.
 
 Library use::
 
-    from pat_okf_agent.uspto import UsptoClient
+    from okf_kb_agent.uspto import UsptoClient
 
     client = UsptoClient()
     res = client.search("applicationMetaData.inventionTitle:graphene", limit=10)
@@ -27,10 +27,10 @@ Library use::
 
 Command line::
 
-    python -m pat_okf_agent.uspto check
-    python -m pat_okf_agent.uspto search 'graphene' --limit 10
-    python -m pat_okf_agent.uspto app 18999999
-    python -m pat_okf_agent.uspto continuity 18999999
+    python -m okf_kb_agent.uspto check
+    python -m okf_kb_agent.uspto search 'graphene' --limit 10
+    python -m okf_kb_agent.uspto app 18999999
+    python -m okf_kb_agent.uspto continuity 18999999
 """
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ DEFAULT_RATE_STATE = Path(
     os.environ.get("USPTO_RATE_STATE")
     or ROOT / "data" / "external" / "uspto_rate_state.json"
 )
-DEFAULT_USER_AGENT = f"pat-okf-agent/{__version__} (research; cache-first)"
+DEFAULT_USER_AGENT = f"okf-kb-agent/{__version__} (research; cache-first)"
 
 
 class UsptoError(Exception):
@@ -403,7 +403,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(
-        prog="python -m pat_okf_agent.uspto",
+        prog="python -m okf_kb_agent.uspto",
         description="USPTO Open Data Portal (Patent File Wrapper) client")
     parser.add_argument("--credentials", default=None,
                         help="ODP credentials JSON (default: .secrets/uspto_credentials.json)")

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from pat_okf_agent.wiki.tokenize import tokenize
+from okf_kb_agent.wiki.tokenize import tokenize
 
 
 class TokenizeTests(unittest.TestCase):

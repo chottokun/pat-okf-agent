@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pat_okf_agent.wiki.evolution import (
+from okf_kb_agent.wiki.evolution import (
     FlowRecord,
     analyse_flows,
     append_learned,
@@ -17,7 +17,7 @@ from pat_okf_agent.wiki.evolution import (
     render_skill,
     slugify,
 )
-from pat_okf_agent.wiki.frontmatter import parse_frontmatter
+from okf_kb_agent.wiki.frontmatter import parse_frontmatter
 
 
 def write(root: Path, rel: str, text: str) -> Path:

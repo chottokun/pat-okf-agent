@@ -3,7 +3,7 @@
 EPO の特許データ取得を 1 か所に集約した共有モジュールです。個別の反復スクリプトに
 OAuth 処理やキャッシュ処理をコピーせず、ここを経由してください。
 
-- 実装: `src/pat_okf_agent/epo.py`
+- 実装: `src/okf_kb_agent/epo.py`
 - テスト: `tests/test_epo_api.py`
 - 対象サービス:
   - **EPO OPS 3.2** — 書誌検索・biblio・family・fulltext/claims・legal・EP Register（要 OPS アカウント）
@@ -54,7 +54,7 @@ export EPO_OPS_CREDENTIALS=/path/to/ops_credentials.json
 ## 2. ライブラリとして使う
 
 ```python
-from pat_okf_agent.epo import OpsClient, EpsClient
+from okf_kb_agent.epo import OpsClient, EpsClient
 
 ops = OpsClient()                      # .secrets/ と環境変数を自動解決
 res = ops.search('pa="EXAMPLE CORP" and ti="alloy"', end=25)
@@ -100,27 +100,27 @@ OPS の Register 詳細（`biblio` / `events` など）は Free プランのキ�
 
 ```bash
 # 認証情報の解決だけ確認（ネットワークなし）
-python -m pat_okf_agent.epo check
+python -m okf_kb_agent.epo check
 
 # トークンを 1 回だけ取得（必要な場合のみ）
-python -m pat_okf_agent.epo token
+python -m okf_kb_agent.epo token
 
 # 検索（OPS の検索結果は最大 25 件が Free プランの実用窓）
-python -m pat_okf_agent.epo search 'pa="EXAMPLE INDUSTRY"' --end 25
+python -m okf_kb_agent.epo search 'pa="EXAMPLE INDUSTRY"' --end 25
 
 # 書誌 / ファミリー / 法的状態
-python -m pat_okf_agent.epo biblio WO9999999A1
-python -m pat_okf_agent.epo family WO9999999A1
-python -m pat_okf_agent.epo legal US9999999A1
+python -m okf_kb_agent.epo biblio WO9999999A1
+python -m okf_kb_agent.epo family WO9999999A1
+python -m okf_kb_agent.epo legal US9999999A1
 
 # 公式 EP 文献（EPS、認証不要）
-python -m pat_okf_agent.epo eps-info EP9999999B1
-python -m pat_okf_agent.epo eps-claims EP9999999B1
-python -m pat_okf_agent.epo eps-document EP9999999B1 > /tmp/EP9999999B1.xml
+python -m okf_kb_agent.epo eps-info EP9999999B1
+python -m okf_kb_agent.epo eps-claims EP9999999B1
+python -m okf_kb_agent.epo eps-document EP9999999B1 > /tmp/EP9999999B1.xml
 
 # 共通オプションはサブコマンドより前に置く
-python -m pat_okf_agent.epo --offline biblio WO9999999A1
-python -m pat_okf_agent.epo --refresh search 'pa="EXAMPLE INDUSTRY"'
+python -m okf_kb_agent.epo --offline biblio WO9999999A1
+python -m okf_kb_agent.epo --refresh search 'pa="EXAMPLE INDUSTRY"'
 ```
 
 `--offline` はキャッシュのみを使用します。`--refresh` はキャッシュを無視して再取得します。
@@ -150,7 +150,7 @@ python -m pat_okf_agent.epo --refresh search 'pa="EXAMPLE INDUSTRY"'
 
 取得した特許データを OKF v0.2 ナレッジベース（Markdown + 相対リンクグラフ）へ取り込む場合は、
 `okf ingest-epo` コマンドまたは MCP の `okf_ingest_epo` ツールを使用してください（詳細は `docs/okf_wiki.md` を参照）。
-カスタムスクリプトから利用する場合は、直接 `from pat_okf_agent.epo import OpsClient, EpsClient` を import してください。
+カスタムスクリプトから利用する場合は、直接 `from okf_kb_agent.epo import OpsClient, EpsClient` を import してください。
 
 ## 6. テスト
 

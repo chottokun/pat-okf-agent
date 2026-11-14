@@ -35,7 +35,7 @@ from . import __version__
 API_ROOT = "https://api.uspto.gov"
 FILES_ROOT = API_ROOT + "/api/v1/datasets/products/files"
 DEFAULT_TIMEOUT = 180.0
-DEFAULT_USER_AGENT = f"pat-okf-agent/{__version__} (research; cache-first)"
+DEFAULT_USER_AGENT = f"okf-kb-agent/{__version__} (research; cache-first)"
 
 
 class BulkError(Exception):

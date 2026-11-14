@@ -5,13 +5,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pat_okf_agent.wiki.frontmatter import (
+from okf_kb_agent.wiki.frontmatter import (
     FrontmatterError,
     dump_document,
     dump_frontmatter,
     parse_frontmatter,
 )
-from pat_okf_agent.wiki.model import (
+from okf_kb_agent.wiki.model import (
     BASIS_VALUES,
     GENRE_VALUES,
     KNOWN_SOURCE_KINDS,
