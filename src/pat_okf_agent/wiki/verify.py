@@ -116,6 +116,7 @@ class VerificationResult:
     okf_source: str | None = None
     warnings: list[str] = field(default_factory=list)
     error: str | None = None
+    snapshot: str | None = None
 
     def format_okf_source(self) -> str | None:
         """Format an OKF frontmatter source entry if verification succeeded."""
@@ -129,6 +130,8 @@ class VerificationResult:
             tokens.append(f"retrieved={self.retrieved_at}")
         if self.via:
             tokens.append(f"via={self.via}")
+        if self.snapshot:
+            tokens.append(f"snapshot={self.snapshot}")
 
         source_str = " ".join(tokens)
         # Validate format against model parser
@@ -468,6 +471,23 @@ def _clean_space(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def snapshot_key_for_file(sha256_hex: str) -> str:
+    """Return deterministic snapshot filename stem 'local_<sha256[:16]>' for a local file."""
+    clean = sha256_hex.strip().removeprefix("sha256:").lower()
+    if len(clean) < 16 or not re.fullmatch(r"[0-9a-f]+", clean):
+        raise ValueError(f"Invalid sha256 hex digest: {sha256_hex!r}")
+    return f"local_{clean[:16]}"
+
+
+def _sanitize_local_identifier(filename: str) -> str:
+    """Sanitize a local filename into a whitespace-free token safe for OKF source entries."""
+    base = Path(filename).name.strip()
+    cleaned = re.sub(r"[^\w.-]+", "_", base).strip("_")
+    if not cleaned or cleaned.strip(".") == "":
+        return "file"
+    return cleaned
+
+
 def snapshot_key_for_url(target_or_url: str | ClassifiedTarget) -> str:
     """Return deterministic snapshot filename stem '<netloc_safe>_<sha1[:16]>' for a URL."""
     classified = (
@@ -487,18 +507,39 @@ def snapshot_key_for_url(target_or_url: str | ClassifiedTarget) -> str:
 
 
 def set_snapshot_orphan_reason(
-    cache_dir: Path | str, target_or_url: str | ClassifiedTarget, reason: str
+    cache_dir: Path | str,
+    target_or_url: str | ClassifiedTarget,
+    reason: str,
+    *,
+    file_path: Path | str | None = None,
 ) -> Path:
     """Record orphan/rejection reason into an existing snapshot's .meta.json file."""
     if not reason or not reason.strip():
         raise ValueError("orphan_reason must not be empty")
     cleaned_reason = reason.strip()
-    key = snapshot_key_for_url(target_or_url)
     snapshots_dir = Path(cache_dir) / "snapshots"
+    if file_path is not None:
+        p = Path(file_path)
+        if not p.exists() or not p.is_file():
+            raise SourceVerifyError(f"Local file not found: {file_path}")
+        sha256_hex = hashlib.sha256(p.read_bytes()).hexdigest()
+        key = snapshot_key_for_file(sha256_hex)
+    elif (
+        isinstance(target_or_url, str)
+        and target_or_url.strip()
+        and "/" not in target_or_url
+        and "\\" not in target_or_url
+        and ".." not in target_or_url
+        and (snapshots_dir / f"{target_or_url.strip()}.meta.json").is_file()
+    ):
+        key = target_or_url.strip()
+    else:
+        key = snapshot_key_for_url(target_or_url)
     meta_path = snapshots_dir / f"{key}.meta.json"
     if not meta_path.is_file():
+        label = str(file_path) if file_path is not None else str(target_or_url)
         raise SourceVerifyError(
-            f"Snapshot metadata not found for {target_or_url}: {meta_path}"
+            f"Snapshot metadata not found for {label}: {meta_path}"
         )
     meta_json = json.loads(meta_path.read_text("utf-8"))
     meta_json["orphan_reason"] = cleaned_reason
@@ -1500,50 +1541,18 @@ class SourceVerifier:
         warnings: list[str] = []
 
         if meta_path.exists() and not self.refresh:
+            snap_state = self._load_cached_snapshot(snapshots_dir, key, meta_path, today)
             cached = True
-            meta_json = json.loads(meta_path.read_text("utf-8"))
-            sha256_digest = meta_json.get("sha256")
-            title = meta_json.get("title")
-            extracted_publisher = meta_json.get("extracted_publisher")
-            extracted_issued = meta_json.get("extracted_issued")
-            retrieved_at = meta_json.get("retrieved_at", today)
-            if extracted_issued:
-                try:
-                    year = int(extracted_issued[:4])
-                except (ValueError, TypeError):
-                    pass
-
-            # Find companion file (excluding .meta.json, .extracted.txt, and .tmp)
-            companions = [
-                p
-                for p in snapshots_dir.glob(f"{key}.*")
-                if not p.name.endswith(".meta.json")
-                and not p.name.endswith(".extracted.txt")
-                and not p.name.endswith(".tmp")
-            ]
-            if not companions:
-                raise SourceVerifyError(f"Missing companion snapshot body for {meta_path}")
-            body_file = companions[0]
-            snapshot_path = str(body_file)
-
-            extracted_path = snapshots_dir / f"{key}.extracted.txt"
-            if extracted_path.exists():
-                text = extracted_path.read_text("utf-8")
-                is_pdf = (body_file.suffix.lower() == ".pdf")
-                ext_name = meta_json.get("extractor")
-                if ext_name in ("ascii_fallback", "pypdf_error"):
-                    pdf_ok = False
-                else:
-                    pdf_ok = True
-            else:
-                body_bytes = body_file.read_bytes()
-                if body_file.suffix.lower() == ".pdf":
-                    is_pdf = True
-                    text, pdf_ok, *_ = _extract_pdf_text(body_bytes)
-                else:
-                    parser = _HtmlSnapshotParser()
-                    parser.feed(body_bytes.decode("utf-8", errors="replace"))
-                    text = parser.get_visible_text()
+            sha256_digest = snap_state["sha256_digest"]
+            title = snap_state["title"]
+            extracted_publisher = snap_state["extracted_publisher"]
+            extracted_issued = snap_state["extracted_issued"]
+            retrieved_at = snap_state["retrieved_at"]
+            year = snap_state["year"]
+            snapshot_path = snap_state["snapshot_path"]
+            text = snap_state["text"]
+            is_pdf = snap_state["is_pdf"]
+            pdf_ok = snap_state["pdf_ok"]
         else:
             status, resp_headers, body = self._http_request(
                 url,
@@ -1658,6 +1667,127 @@ class SourceVerifier:
                 json.dumps(meta_payload, indent=2, ensure_ascii=False),
             )
 
+        return self._finalize_snapshot_result(
+            raw_input=target if isinstance(target, str) else target.raw_id,
+            identifier=url,
+            identifier_type="url",
+            kind=classified.kind,
+            via="web",
+            retrieved_at=retrieved_at,
+            issued=issued,
+            extracted_issued=extracted_issued,
+            title=title,
+            extracted_publisher=extracted_publisher,
+            year=year,
+            url=url,
+            text=text,
+            is_pdf=is_pdf,
+            pdf_ok=pdf_ok,
+            cached=cached,
+            snapshot_path=snapshot_path,
+            meta_path=meta_path,
+            sha256_digest=sha256_digest,
+            expect_title=expect_title,
+            expect_author=expect_author,
+            expect_year=expect_year,
+            check_claim=check_claim,
+            warnings=warnings,
+        )
+
+    def _load_cached_snapshot(
+        self,
+        snapshots_dir: Path,
+        key: str,
+        meta_path: Path,
+        today: str,
+    ) -> dict[str, Any]:
+        meta_json = json.loads(meta_path.read_text("utf-8"))
+        sha256_digest = meta_json.get("sha256")
+        title = meta_json.get("title")
+        extracted_publisher = meta_json.get("extracted_publisher")
+        extracted_issued = meta_json.get("extracted_issued")
+        retrieved_at = meta_json.get("retrieved_at", today)
+        year: int | None = None
+        if extracted_issued:
+            try:
+                year = int(extracted_issued[:4])
+            except (ValueError, TypeError):
+                pass
+
+        companions = [
+            p
+            for p in snapshots_dir.glob(f"{key}.*")
+            if not p.name.endswith(".meta.json")
+            and not p.name.endswith(".extracted.txt")
+            and not p.name.endswith(".tmp")
+        ]
+        if not companions:
+            raise SourceVerifyError(f"Missing companion snapshot body for {meta_path}")
+        body_file = companions[0]
+        snapshot_path = str(body_file)
+        orig_ext = str(meta_json.get("original_ext", "")).lower()
+        is_pdf = body_file.suffix.lower() == ".pdf" or orig_ext == ".pdf"
+        pdf_ok = True
+
+        extracted_path = snapshots_dir / f"{key}.extracted.txt"
+        if extracted_path.exists():
+            text = extracted_path.read_text("utf-8")
+            ext_name = meta_json.get("extractor")
+            if ext_name in ("ascii_fallback", "pypdf_error"):
+                pdf_ok = False
+        else:
+            body_bytes = body_file.read_bytes()
+            if is_pdf:
+                text, pdf_ok, *_ = _extract_pdf_text(body_bytes)
+            elif body_file.suffix.lower() in (".html", ".htm"):
+                parser = _HtmlSnapshotParser()
+                parser.feed(body_bytes.decode("utf-8", errors="replace"))
+                text = parser.get_visible_text()
+            else:
+                text = body_bytes.decode("utf-8", errors="replace")
+
+        return {
+            "sha256_digest": sha256_digest,
+            "title": title,
+            "extracted_publisher": extracted_publisher,
+            "extracted_issued": extracted_issued,
+            "retrieved_at": retrieved_at,
+            "year": year,
+            "snapshot_path": snapshot_path,
+            "text": text,
+            "is_pdf": is_pdf,
+            "pdf_ok": pdf_ok,
+        }
+
+    def _finalize_snapshot_result(
+        self,
+        *,
+        raw_input: str,
+        identifier: str,
+        identifier_type: str,
+        kind: str,
+        via: str,
+        retrieved_at: str,
+        issued: str | None,
+        extracted_issued: str | None,
+        title: str | None,
+        extracted_publisher: str | None,
+        year: int | None,
+        url: str | None,
+        text: str,
+        is_pdf: bool,
+        pdf_ok: bool,
+        cached: bool,
+        snapshot_path: str | None,
+        meta_path: Path,
+        sha256_digest: str | None,
+        expect_title: str | None,
+        expect_author: str | None,
+        expect_year: int | None,
+        check_claim: list[str] | None,
+        warnings: list[str],
+        snapshot_key: str | None = None,
+    ) -> VerificationResult:
         meta = SourceMetadata(
             title=title,
             publisher=extracted_publisher,
@@ -1700,21 +1830,208 @@ class SourceVerifier:
         res = VerificationResult(
             ok=ok,
             status=status_str,
-            input=target if isinstance(target, str) else target.raw_id,
-            identifier=url,
-            identifier_type="url",
-            kind=classified.kind,
+            input=raw_input,
+            identifier=identifier,
+            identifier_type=identifier_type,
+            kind=kind,
             registration_agency=None,
-            via="web",
+            via=via,
             retrieved_at=retrieved_at,
             issued=effective_issued,
             metadata=meta,
             checks=checks,
             evidence=evidence,
             warnings=warnings,
+            snapshot=snapshot_key,
         )
         if ok:
             res.okf_source = res.format_okf_source()
         return res
+
+    @staticmethod
+    def _extract_markdown_title(text: str) -> str | None:
+        stripped = text.lstrip("\ufeff")
+        search_text = stripped
+        if stripped.startswith("---\n") or stripped.startswith("---\r\n"):
+            lines = stripped.splitlines(keepends=True)
+            for i in range(1, len(lines)):
+                if lines[i].strip() in ("---", "..."):
+                    search_text = "".join(lines[i + 1:])
+                    break
+        m = re.search(r"^#\s+(.+?)\s*$", search_text, re.MULTILINE)
+        return m.group(1).strip() if m else None
+
+    def verify_file(
+        self,
+        file_path: str | Path,
+        *,
+        kind: str | None = None,
+        issued: str | None = None,
+        expect_title: str | None = None,
+        expect_author: str | None = None,
+        expect_year: int | None = None,
+        check_claim: list[str] | None = None,
+    ) -> VerificationResult:
+        """Verify and snapshot a user-supplied local material file without network calls."""
+        effective_kind = kind or "local-file"
+        if effective_kind not in KNOWN_SOURCE_KINDS:
+            raise ValueError(f"Unknown source kind: {effective_kind!r}")
+
+        path = Path(file_path)
+        identifier = _sanitize_local_identifier(path.name if path.name else str(file_path))
+        today = date.today().isoformat()
+
+        if not path.exists() or not path.is_file():
+            checks = VerificationChecks(
+                title_match=False if expect_title else None,
+                author_match=False if expect_author else None,
+                year_match=False if expect_year else None,
+            )
+            return VerificationResult(
+                ok=False,
+                status="not_found",
+                input=str(file_path),
+                identifier=identifier,
+                identifier_type="file",
+                kind=effective_kind,
+                registration_agency=None,
+                via="local-file",
+                retrieved_at=today,
+                issued=issued or None,
+                metadata=SourceMetadata(),
+                checks=checks,
+                evidence=EvidenceRecord(cached=False),
+                error=f"Local file not found: {file_path}",
+            )
+
+        body = path.read_bytes()
+        if len(body) > MAX_SNAPSHOT_BYTES:
+            raise SourceVerifyError(
+                f"Snapshot exceeds size limit of {MAX_SNAPSHOT_BYTES} bytes ({len(body)} bytes)"
+            )
+
+        sha256_hex = hashlib.sha256(body).hexdigest()
+        sha256_digest = f"sha256:{sha256_hex}"
+        key = snapshot_key_for_file(sha256_hex)
+
+        snapshots_dir = self.cache_dir / "snapshots"
+        meta_path = snapshots_dir / f"{key}.meta.json"
+        retrieved_at = today
+        cached = False
+        snapshot_path: str | None = None
+        title: str | None = None
+        extracted_publisher: str | None = None
+        extracted_issued: str | None = None
+        year: int | None = None
+        text: str = ""
+        pdf_ok: bool = True
+        is_pdf: bool = False
+        warnings: list[str] = []
+
+        if meta_path.exists() and not self.refresh:
+            snap_state = self._load_cached_snapshot(snapshots_dir, key, meta_path, today)
+            cached = True
+            sha256_digest = snap_state["sha256_digest"] or sha256_digest
+            title = snap_state["title"]
+            extracted_publisher = snap_state["extracted_publisher"]
+            extracted_issued = snap_state["extracted_issued"]
+            retrieved_at = snap_state["retrieved_at"]
+            year = snap_state["year"]
+            snapshot_path = snap_state["snapshot_path"]
+            text = snap_state["text"]
+            is_pdf = snap_state["is_pdf"]
+            pdf_ok = snap_state["pdf_ok"]
+        else:
+            original_ext = path.suffix.lower().lstrip(".")
+            if original_ext == "pdf" or body.startswith(b"%PDF"):
+                stored_ext = "pdf"
+                is_pdf = True
+                text, pdf_ok, extractor = _extract_pdf_text(body)
+            elif original_ext in ("html", "htm"):
+                stored_ext = "html"
+                parser = _HtmlSnapshotParser()
+                parser.feed(body.decode("utf-8", errors="replace"))
+                title = parser.get_title()
+                extracted_publisher = parser.get_publisher()
+                extracted_issued, year = parser.get_date()
+                text = parser.get_visible_text()
+                extractor = "html.parser"
+            elif original_ext in ("md", "markdown"):
+                # Save Markdown snapshots as .txt so okf validate's rglob('*.md') never parses them as concept notes.
+                stored_ext = "txt"
+                text = body.decode("utf-8", errors="replace")
+                title = self._extract_markdown_title(text)
+                extractor = "utf-8"
+            elif original_ext in ("txt", "json", "csv", "tsv", "xml", "log", "yaml", "yml", "rst"):
+                stored_ext = original_ext
+                text = body.decode("utf-8", errors="replace")
+                extractor = "utf-8"
+            else:
+                try:
+                    text = body.decode("utf-8")
+                    stored_ext = "txt"
+                    extractor = "utf-8"
+                except UnicodeDecodeError:
+                    text = ""
+                    stored_ext = "bin"
+                    extractor = "binary"
+
+            body_path = snapshots_dir / f"{key}.{stored_ext}"
+            _atomic_write_bytes(body_path, body)
+            snapshot_path = str(body_path)
+
+            extracted_path = snapshots_dir / f"{key}.extracted.txt"
+            _atomic_write_bytes(extracted_path, text)
+            extracted_bytes = text.encode("utf-8")
+            extracted_sha256 = f"sha256:{hashlib.sha256(extracted_bytes).hexdigest()}"
+            now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+            meta_payload = {
+                "source_type": "local-file",
+                "original_filename": path.name,
+                "original_ext": f".{original_ext}" if original_ext else "",
+                "stored_ext": f".{stored_ext}",
+                "extractor": extractor,
+                "extracted_sha256": extracted_sha256,
+                "content_length": len(body),
+                "retrieved_at": today,
+                "timestamp": now_iso,
+                "sha256": sha256_digest,
+                "title": title,
+                "extracted_publisher": extracted_publisher,
+                "extracted_issued": extracted_issued,
+            }
+            _atomic_write_bytes(
+                meta_path,
+                json.dumps(meta_payload, indent=2, ensure_ascii=False),
+            )
+
+        return self._finalize_snapshot_result(
+            raw_input=str(file_path),
+            identifier=identifier,
+            identifier_type="file",
+            kind=effective_kind,
+            via="local-file",
+            retrieved_at=retrieved_at,
+            issued=issued,
+            extracted_issued=extracted_issued,
+            title=title,
+            extracted_publisher=extracted_publisher,
+            year=year,
+            url=None,
+            text=text,
+            is_pdf=is_pdf,
+            pdf_ok=pdf_ok,
+            cached=cached,
+            snapshot_path=snapshot_path,
+            meta_path=meta_path,
+            sha256_digest=sha256_digest,
+            expect_title=expect_title,
+            expect_author=expect_author,
+            expect_year=expect_year,
+            check_claim=check_claim,
+            warnings=warnings,
+            snapshot_key=key,
+        )
 
 

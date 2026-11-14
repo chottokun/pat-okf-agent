@@ -97,19 +97,25 @@
 
 仕様や方針は合意済みだが、コード未実装の項目です。実装時に設計を蒸し返さないこと。
 
-### 4.1 `okf verify-source --file`
-* **決定済みの位置づけ**: **「利用者が渡したローカル素材のインテイク口」**。
-* **仕様方針**:
-  * 外部 URL からの HTTP 取得やスクレイピングではなく、手元にあるローカルファイル（PDF、テキスト、Markdown 等）を引数に取る。
-  * ファイルの sha256 を計算し、指定の証跡ディレクトリ（`evidence/snapshots/` 等）へ保全コピー（スナップショット化）を行う。
-  * メタデータ（ファイル名、取得日、ハッシュ値、抽出元）をサイドカー形式（`.meta.json`）で生成する。
-  * 出典形式は `local-file:<相対パス>` または `file:<ハッシュ>` として grounding する。
+### 4.1 `okf verify-source --file`（実装済み）
+* **決定済みの位置づけ**: **「利用者が渡したローカル素材のインテイク口」**。保証するのは「受け取ったバイト列の同一性」であり、素材の出所自体の真偽は保証しない。
+* **実装された仕様**:
+  * 外部 URL からの HTTP 取得を行わず、手元にあるローカルファイル（PDF、HTML、TXT、Markdown 等）を `--file` 引数に取る。
+  * ファイルの sha256 を計算し、`local_<sha256[:16]>` をキーとして指定の証跡ディレクトリ（`snapshots/` 等）へ保全コピー・`.extracted.txt`・`.meta.json` サイドカーを生成する。
+  * **Markdown 素材の拡張子保護**: `.md` / `.markdown` 素材は §3.4 の対策に従い、本体コピーを `.txt` として保存して `okf validate` の誤検知を防ぐ（元拡張子は `.meta.json` の `original_ext` に保持）。
+  * **内容ハッシュ共有時のファイル名扱い**: 同一内容・別ファイル名の素材を取り込んだ場合、ハッシュキー `local_<sha256[:16]>` が一致するためスナップショットを共有し、`.meta.json` の `original_filename` には最初に取り込んだ名前が残る。
+  * **出典形式**: `local-file:<無空白ファイル名> retrieved=YYYY-MM-DD via=local-file snapshot=local_<sha256[:16]>`（`--issued` 指定時のみ `issued=YYYY-MM-DD` を付与。角括弧等の修飾は付かない）。`okf validate --check-evidence` で `ops-record` と同じ `snapshot=` 機構で検証される。
 
 ### 4.2 Traversal（グラフ探索）のエンドツーエンド検証
 * 検索結果（起点）から Markdown 相対リンクを辿ってコンテキストを収集する `traversal` 機能について、実運用での包括的ベンチマーク（エンドツーエンド検証）は今後の課題として残されている。
 
-### 4.3 `LinkScan`（未リンクの素テキスト slug 検出）の本流昇格判断
-* **現状と方針**: 外部の作業用バッチランナー側で先に実装・運用実績を積み、全 KB 共通の読み取り専用コマンド（未リンク箇所の事実だけを JSON で返す `okf links --unlinked` 等）として有用性が確定した段階で `pat-okf-agent` 本体への昇格を判断する。
+### 4.3 `okf links` 診断と `LinkScan`（未リンクの素テキスト slug 検出）
+* **到達性診断（実装済み）**: 孤立ノード、被参照 0 件（`zero_inbound`）、発リンク 0 件（`zero_outbound`）、弱連結成分、`--from <seed>` 起点からの到達不能ノートを事実として返す `okf links`（既定 `--no-admin`）を `pat-okf-agent` 本体へ実装済み。
+* **未リンク素テキスト検出（保留）**: 外部の作業用バッチランナー側で先に `LinkScan` の実装・運用実績を積み、全 KB 共通の読み取り専用機能（`okf links --unlinked` 等）として有用性が確定した段階で本流への昇格を判断する。
+
+### 4.4 KB ビューア向け JSON エクスポート（`scripts/export_kb_viewer_all.py` → `okf export` 正式化）
+* **現状（ローカルプロトタイプ）**: 複数 KB（`concepts/*.md`、`patents/*.md`、`synonyms.json`、統計件数）を単一のビューア用 JSON バンドルへ書き出す試作スクリプトとして `--base <kb-base-dir>` / `--out <output.json>` 引数を受け取る運用形が先行している。`PyYAML` がある環境では YAML パーサを使い、`uv run` / `.venv` の標準ライブラリ専用環境では組込みの `fallback_parse()` で同一出力を得る。
+* **正式化方針**: 対象 KB リストやラベルの指定仕様（設定ファイルまたは複数ディレクトリ引数）が固まった段階で、汎用・設定駆動の `okf export` サブコマンドとして本体 CLI へ正式化する。
 
 ---
 

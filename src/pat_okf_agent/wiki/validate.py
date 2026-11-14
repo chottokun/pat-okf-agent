@@ -527,7 +527,7 @@ def validate_evidence(
             except ValueError:
                 continue
 
-            if src_entry.kind == "ops-record":
+            if src_entry.kind in ("ops-record", "local-file") or "snapshot" in src_entry.attrs:
                 snapshot_attr = src_entry.attrs.get("snapshot")
                 if snapshot_attr is None:
                     warnings.append((
@@ -835,7 +835,7 @@ def validate_evidence(
         except Exception:
             meta_json = {}
 
-        url = meta_json.get("url", "")
+        url = meta_json.get("url") or meta_json.get("original_filename", "")
         deleted_at = meta_json.get("deleted_at")
         orphan_reason = meta_json.get("orphan_reason")
         retrieved_at = meta_json.get("retrieved_at")

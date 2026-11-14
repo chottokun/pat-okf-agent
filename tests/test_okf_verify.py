@@ -19,6 +19,7 @@ from pat_okf_agent.wiki.verify import (
     _extract_pdf_text,
     classify_target,
     set_snapshot_orphan_reason,
+    snapshot_key_for_file,
     snapshot_key_for_url,
 )
 
@@ -1503,6 +1504,159 @@ class TestSnapshotKeyAndOrphanReason(unittest.TestCase):
                 set_snapshot_orphan_reason(
                     Path(tmpdir), "https://example.com/item.html", "   "
                 )
+
+
+class TestVerifyFile(unittest.TestCase):
+    def test_verify_file_text_and_markdown_saved_as_txt(self) -> None:
+        import hashlib
+        import json
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            cache_dir = root / "evidence"
+            verifier = SourceVerifier(cache_dir=cache_dir)
+
+            md_path = root / "sample note.md"
+            md_content = (
+                "---\n"
+                "title: Ignore FM Title\n"
+                "---\n\n"
+                "# AlN Thermal Conductivity Notes\n\n"
+                "Measured value is 180 W/m·K at room temperature.\n"
+            )
+            md_bytes = md_content.encode("utf-8")
+            md_path.write_bytes(md_bytes)
+
+            expected_hex = hashlib.sha256(md_bytes).hexdigest()
+            expected_key = snapshot_key_for_file(expected_hex)
+            self.assertEqual(expected_key, f"local_{expected_hex[:16]}")
+
+            res = verifier.verify_file(
+                md_path,
+                expect_title="AlN Thermal Conductivity",
+                check_claim=["180 W/mK"],
+            )
+            self.assertTrue(res.ok)
+            self.assertEqual(res.status, "verified")
+            self.assertEqual(res.identifier_type, "file")
+            self.assertEqual(res.kind, "local-file")
+            self.assertEqual(res.via, "local-file")
+            self.assertEqual(res.identifier, "sample_note.md")
+            self.assertEqual(res.snapshot, expected_key)
+            self.assertEqual(res.metadata.title, "AlN Thermal Conductivity Notes")
+            self.assertTrue(res.checks.title_match)
+            self.assertEqual(res.checks.claim_matches, {"180 W/mK": True})
+            self.assertFalse(res.evidence.cached)
+
+            # okf_source omits issued= when absent (never includes literal brackets)
+            self.assertIsNotNone(res.okf_source)
+            self.assertNotIn("[", res.okf_source or "")
+            self.assertNotIn("issued=", res.okf_source or "")
+            self.assertIn(f"snapshot={expected_key}", res.okf_source or "")
+            parsed = parse_source_entry(res.okf_source or "")
+            self.assertEqual(parsed.kind, "local-file")
+            self.assertEqual(parsed.attrs["snapshot"], expected_key)
+
+            # Snapshot body for .md MUST be saved as .txt, never .md
+            snap_dir = cache_dir / "snapshots"
+            self.assertTrue((snap_dir / f"{expected_key}.txt").is_file())
+            self.assertFalse((snap_dir / f"{expected_key}.md").exists())
+            self.assertTrue((snap_dir / f"{expected_key}.extracted.txt").is_file())
+            meta = json.loads((snap_dir / f"{expected_key}.meta.json").read_text("utf-8"))
+            self.assertEqual(meta["source_type"], "local-file")
+            self.assertEqual(meta["original_filename"], "sample note.md")
+            self.assertEqual(meta["original_ext"], ".md")
+            self.assertEqual(meta["stored_ext"], ".txt")
+            self.assertEqual(meta["sha256"], f"sha256:{expected_hex}")
+
+            # Claim mismatch produces unverified, ok=False, okf_source=None
+            bad = verifier.verify_file(md_path, check_claim=["999 W/mK"])
+            self.assertFalse(bad.ok)
+            self.assertEqual(bad.status, "unverified")
+            self.assertTrue(bad.evidence.cached)
+            self.assertIsNone(bad.okf_source)
+
+    def test_verify_file_html_and_issued_date(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            html_path = root / "datasheet.html"
+            html_path.write_text(
+                "<html><head><title>SiC Sheet</title>"
+                "<meta name='citation_publication_date' content='2025-02-10'>"
+                "</head><body><p>Thermal conductivity: 490 W/m-K</p></body></html>",
+                encoding="utf-8",
+            )
+            verifier = SourceVerifier(cache_dir=root / "evidence")
+            res = verifier.verify_file(
+                html_path,
+                kind="datasheet",
+                issued="2025-03-01",
+                check_claim=["490 W/mK"],
+            )
+            self.assertTrue(res.ok)
+            self.assertEqual(res.kind, "datasheet")
+            self.assertEqual(res.issued, "2025-03-01")
+            self.assertIn("issued=2025-03-01", res.okf_source or "")
+            parsed = parse_source_entry(res.okf_source or "")
+            self.assertEqual(parsed.attrs["issued"], "2025-03-01")
+
+    def test_verify_file_duplicate_content_retains_first_original_filename(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            cache_dir = root / "evidence"
+            f1 = root / "first_name.txt"
+            f2 = root / "second_name.txt"
+            payload = "Identical experimental measurement log: 220 W/mK\n"
+            f1.write_text(payload, encoding="utf-8")
+            f2.write_text(payload, encoding="utf-8")
+
+            verifier = SourceVerifier(cache_dir=cache_dir)
+            r1 = verifier.verify_file(f1)
+            r2 = verifier.verify_file(f2)
+
+            self.assertTrue(r1.ok and r2.ok)
+            self.assertFalse(r1.evidence.cached)
+            self.assertTrue(r2.evidence.cached)
+            self.assertEqual(r1.snapshot, r2.snapshot)
+            self.assertEqual(r1.identifier, "first_name.txt")
+            self.assertEqual(r2.identifier, "second_name.txt")
+
+            meta = json.loads(
+                (cache_dir / "snapshots" / f"{r1.snapshot}.meta.json").read_text("utf-8")
+            )
+            self.assertEqual(meta["original_filename"], "first_name.txt")
+
+            # Orphan reason by file path updates shared .meta.json
+            meta_path = set_snapshot_orphan_reason(
+                cache_dir, "", "duplicate test reason", file_path=f2
+            )
+            updated = json.loads(meta_path.read_text("utf-8"))
+            self.assertEqual(updated["orphan_reason"], "duplicate test reason")
+
+    def test_verify_file_not_found_and_unknown_kind(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            verifier = SourceVerifier(cache_dir=root / "evidence")
+            res = verifier.verify_file(root / "missing.pdf", expect_title="Anything")
+            self.assertFalse(res.ok)
+            self.assertEqual(res.status, "not_found")
+            self.assertFalse(res.checks.title_match)
+            self.assertIsNone(res.okf_source)
+
+            with self.assertRaises(ValueError):
+                verifier.verify_file(root / "missing.pdf", kind="bogus-kind")
 
 
 if __name__ == "__main__":

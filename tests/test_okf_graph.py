@@ -142,6 +142,79 @@ class GraphTests(unittest.TestCase):
             self.assertIsInstance(graph, WikiGraph)
             self.assertEqual(graph.nodes, {})
             self.assertEqual(graph.traverse([]), [])
+            rep = graph.diagnose_reachability()
+            self.assertEqual(rep.node_count, 0)
+            self.assertEqual(rep.component_count, 0)
+            self.assertEqual(rep.isolated, [])
+
+    def test_diagnose_reachability_zero_in_out_isolated_components_and_seeds(self):
+        # Fixture from setUp: a -> b -> c; nested/d (isolated)
+        # Add e -> c (zero_inbound, non-isolated)
+        write(self.root, "e.md", "type: Concept\ntitle: E\n", "[c](c.md)\n")
+        graph = build_graph(self.root)
+
+        rep = graph.diagnose_reachability()
+        self.assertEqual(rep.node_count, 5)
+        self.assertEqual(rep.edge_count, 3)
+        self.assertEqual(rep.isolated_count, 1)
+        self.assertEqual([x["rel"] for x in rep.isolated], ["nested/d.md"])
+
+        self.assertEqual(rep.zero_inbound_count, 3)
+        self.assertEqual(
+            [x["rel"] for x in rep.zero_inbound],
+            ["a.md", "e.md", "nested/d.md"],
+        )
+        zero_in_map = {x["rel"]: x for x in rep.zero_inbound}
+        self.assertFalse(zero_in_map["a.md"]["is_isolated"])
+        self.assertTrue(zero_in_map["nested/d.md"]["is_isolated"])
+
+        self.assertEqual(rep.zero_outbound_count, 2)
+        self.assertEqual(
+            [x["rel"] for x in rep.zero_outbound],
+            ["c.md", "nested/d.md"],
+        )
+
+        # Weakly connected components: {a,b,c,e} and {nested/d}
+        self.assertEqual(rep.component_count, 2)
+        self.assertEqual(rep.components[0]["nodes"], ["a.md", "b.md", "c.md", "e.md"])
+        self.assertEqual(rep.components[1]["nodes"], ["nested/d.md"])
+        self.assertIsNone(rep.seed_reachability)
+
+        # Directed seed reachability from a.md
+        rep_out = graph.diagnose_reachability(seeds=["a.md"], direction="out")
+        sr_out = rep_out.seed_reachability
+        assert sr_out is not None
+        self.assertEqual(sr_out["seeds"], ["a.md"])
+        self.assertEqual(
+            [x["rel"] for x in sr_out["reachable"]],
+            ["a.md", "b.md", "c.md"],
+        )
+        self.assertEqual(
+            [x["rel"] for x in sr_out["unreachable"]],
+            ["e.md", "nested/d.md"],
+        )
+
+        # Reverse reachability into c.md
+        rep_in = graph.diagnose_reachability(seeds=["c"], direction="in")
+        sr_in = rep_in.seed_reachability
+        assert sr_in is not None
+        self.assertEqual(
+            sorted(x["rel"] for x in sr_in["reachable"]),
+            ["a.md", "b.md", "c.md", "e.md"],
+        )
+        self.assertEqual(
+            [x["rel"] for x in sr_in["unreachable"]],
+            ["nested/d.md"],
+        )
+
+        # Exclude nodes works and updates edge counts accurately
+        rep_excl = graph.diagnose_reachability(exclude_nodes={"e.md"})
+        self.assertEqual(rep_excl.node_count, 4)
+        self.assertEqual(rep_excl.edge_count, 2)
+        self.assertEqual(
+            [x["rel"] for x in rep_excl.zero_inbound],
+            ["a.md", "nested/d.md"],
+        )
 
 
 if __name__ == "__main__":

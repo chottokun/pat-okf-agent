@@ -934,6 +934,111 @@ class CliTests(unittest.TestCase):
         nodes = [h["node"] for h in json.loads(out)]
         self.assertEqual(nodes, ["concepts/workflow-note.md"])
 
+    def test_verify_source_file_cli_and_mutual_exclusion(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            evidence_dir = tmp / "evidence"
+            local_doc = tmp / "spec.md"
+            local_doc.write_text("# Spec Sheet\nThermal value: 210 W/mK\n", encoding="utf-8")
+
+            # Verify --file --json works completely offline
+            code, out, err = self.run_cli(
+                "verify-source",
+                "--file", str(local_doc),
+                "--cache-dir", str(evidence_dir),
+                "--expect-title", "Spec Sheet",
+                "--check-claim", "210 W/mK",
+                "--json",
+            )
+            self.assertEqual(code, 0, f"err: {err}")
+            data = json.loads(out)
+            self.assertTrue(data["ok"])
+            self.assertEqual(data["status"], "verified")
+            self.assertEqual(data["via"], "local-file")
+            self.assertIn("local-file:spec.md", data["okf_source"])
+
+            # --orphan-reason with --file works
+            code_or, out_or, _ = self.run_cli(
+                "verify-source",
+                "--file", str(local_doc),
+                "--orphan-reason", "試験データ不足のため保留",
+                "--cache-dir", str(evidence_dir),
+                "--json",
+            )
+            self.assertEqual(code_or, 0)
+            self.assertEqual(json.loads(out_or)["orphan_reason"], "試験データ不足のため保留")
+
+            # Neither target nor --file -> exit 2
+            code_none, _, err_none = self.run_cli("verify-source")
+            self.assertEqual(code_none, 2)
+            self.assertIn("error:", err_none)
+
+            # Both target and --file -> exit 2
+            code_both, _, err_both = self.run_cli(
+                "verify-source", "10.1111/jace.14748", "--file", str(local_doc)
+            )
+            self.assertEqual(code_both, 2)
+            self.assertIn("error:", err_both)
+
+    def test_links_cli_reachability_and_admin_exclusion(self):
+        write(self.root, "concepts/hub.md", node(
+            "type: Concept\ntitle: Hub\n",
+            "# Hub\nSee [leaf](leaf.md).\n",
+        ))
+        write(self.root, "concepts/leaf.md", node(
+            "type: Concept\ntitle: Leaf\n",
+            "# Leaf\nDetails.\n",
+        ))
+        write(self.root, "concepts/orphan.md", node(
+            "type: Concept\ntitle: Orphan\n",
+            "# Orphan\nUnlinked.\n",
+        ))
+        write(self.root, "BUILDLOG.md", node(
+            "type: Note\ntitle: Build Log\n",
+            "# Build Log\nMentions [orphan](concepts/orphan.md).\n",
+        ))
+
+        # Default (--no-admin): BUILDLOG.md does NOT mask orphan.md
+        code, out, err = self.run_cli("links", self.root, "--json")
+        self.assertEqual(code, 0, f"err: {err}")
+        data = json.loads(out)
+        self.assertEqual(data["node_count"], 3)
+        self.assertEqual([x["rel"] for x in data["isolated"]], ["concepts/orphan.md"])
+        self.assertEqual(
+            [x["rel"] for x in data["zero_inbound"]],
+            ["concepts/hub.md", "concepts/orphan.md"],
+        )
+
+        # --from hub finds orphan unreachable
+        code_from, out_from, _ = self.run_cli(
+            "links", self.root, "--from", "hub", "--json"
+        )
+        self.assertEqual(code_from, 0)
+        sr = json.loads(out_from)["seed_reachability"]
+        self.assertEqual(
+            [x["rel"] for x in sr["unreachable"]],
+            ["concepts/orphan.md"],
+        )
+
+        # --include-admin includes BUILDLOG.md (which links to orphan.md)
+        code_adm, out_adm, _ = self.run_cli(
+            "links", self.root, "--include-admin", "--json"
+        )
+        self.assertEqual(code_adm, 0)
+        data_adm = json.loads(out_adm)
+        self.assertEqual(data_adm["node_count"], 4)
+        self.assertEqual(data_adm["isolated"], [])
+
+        # Human-readable mode also exits 0
+        code_txt, out_txt, _ = self.run_cli("links", self.root, "--from", "hub")
+        self.assertEqual(code_txt, 0)
+        self.assertIn("UNREACHABLE: concepts/orphan.md", out_txt)
+
+        # Invalid seed exits 1
+        code_bad, _, err_bad = self.run_cli("links", self.root, "--from", "nonexistent")
+        self.assertEqual(code_bad, 1)
+        self.assertIn("seed concept not found", err_bad)
+
 
 if __name__ == "__main__":
     unittest.main()

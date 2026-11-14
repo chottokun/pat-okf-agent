@@ -381,6 +381,22 @@ class ConceptTests(unittest.TestCase):
         self.assertEqual(entry_via.id, "records/log.md")
         self.assertEqual(entry_via.attrs, {"via": "manual", "snapshot": "snap1"})
 
+        self.assertIn("local-file", KNOWN_SOURCE_KINDS)
+        self.assertNotIn("local-file", WEB_SOURCE_KINDS)
+        entry_local = parse_source_entry(
+            "local-file:notes.txt retrieved=2026-11-14 via=local-file snapshot=local_0123456789abcdef"
+        )
+        self.assertEqual(entry_local.kind, "local-file")
+        self.assertEqual(entry_local.id, "notes.txt")
+        self.assertEqual(
+            entry_local.attrs,
+            {
+                "retrieved": "2026-11-14",
+                "via": "local-file",
+                "snapshot": "local_0123456789abcdef",
+            },
+        )
+
     def test_validate_meta_provenance_fields(self):
         # valid basis values
         for b in ("external", "model", "mixed", "ops-record"):

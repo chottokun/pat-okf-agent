@@ -52,13 +52,13 @@ Use `search` and `traverse` only when context is insufficient.
 # Full-text seeds (Pattern A/B; auto selects B above 500 nodes)
 uv run okf search <wiki> "<query>" --limit 10 --json
 
-# Explicit graph expansion around a known node
-uv run okf traverse <wiki> <seed> \
-  --depth 2 --query "<query>" --direction out --json
+# Explicit graph expansion (out) or incoming links (in)
+uv run okf traverse <wiki> <seed> --depth 2 --query "<query>" --direction out --json
+uv run okf traverse <wiki> <seed> --depth 1 --direction in --json
 
-# Inspect all incoming links
-uv run okf traverse <wiki> <seed> \
-  --depth 1 --direction in --json
+# Diagnose link reachability, zero-inbound concepts, and components (--no-admin default)
+uv run okf links <wiki> --json
+uv run okf links <wiki> --from <seed> --direction out --json
 ```
 
 Interpret results:
@@ -144,10 +144,10 @@ review the per-query baseline/expanded results.
 Follow these 5 steps when creating or updating notes:
 
 1. **Avoid duplicates**: Search (`okf search`) before creating; prefer updating over creating a duplicate.
-2. **Choose type and basis**: Determine `type` (e.g. `Concept`) and epistemic `basis` (`external`, `mixed`, `model`, or `ops-record`). Notes with `basis: ops-record` cite internal record snapshots using `sources: ['ops-record:<path>[#<section>] snapshot=<key>']`.
+2. **Choose type and basis**: Determine `type` (e.g. `Concept`) and epistemic `basis` (`external`, `mixed`, `model`, or `ops-record`). Notes with `basis: ops-record` cite internal record snapshots using `sources: ['ops-record:<path>[#<section>] snapshot=<key>']`. User-supplied local materials ingested via `okf verify-source --file` use `sources: ['local-file:<filename> retrieved=YYYY-MM-DD via=local-file snapshot=<key>']`.
 3. **Select skeleton**: Include 4 major H2 scopes (`Taxonomy`, `Workflow / Implementation`, `Synergistic Combinations`, `Gotchas / Anti-Pitfalls`).
-4. **Isolate unverified metrics and back claims**: Place unverified unit metrics inside `> [!NOTE] 一般知識（未検証）` (or `General Knowledge (Unverified)`). For mixed tables, mark column headers with `（一般知識・未検証）` or `(Unverified)`. Back claims with links under `**代表公報（実データ）:**` (or `Representative Patents (Verified):`) and declare `sources`. Controlled H3 `### 出典に基づく整理` (`Based on Sources`) is transparent. Verify external papers/web sources with `okf verify-source` (see `.agents/skills/source-verify/SKILL.md`).
-5. **Verify immediately**: Run `okf validate <wiki>` and `okf index <wiki>` to confirm zero `[P1]`–`[P9]` warnings. For multi-concept batches, orchestrate staging, closing gates, and delegation via `.agents/skills/kb-batch-discipline/SKILL.md`.
+4. **Isolate unverified metrics and back claims**: Place unverified unit metrics inside `> [!NOTE] 一般知識（未検証）` (or `General Knowledge (Unverified)`). For mixed tables, mark column headers with `（一般知識・未検証）` or `(Unverified)`. Back claims with links under `**代表公報（実データ）:**` (or `Representative Patents (Verified):`) and declare `sources`. Controlled H3 `### 出典に基づく整理` (`Based on Sources`) is transparent. Verify external papers/web sources/local files with `okf verify-source` (see `.agents/skills/source-verify/SKILL.md`).
+5. **Verify immediately**: Run `okf validate <wiki>`, `okf index <wiki>`, and `okf links <wiki>` to confirm zero `[P1]`–`[P9]` warnings and check for `zero_inbound` or unreachable concepts. For multi-concept batches, orchestrate staging, closing gates, and delegation via `.agents/skills/kb-batch-discipline/SKILL.md`.
 
 <!-- okf-concept-skeleton:start -->
 ```markdown

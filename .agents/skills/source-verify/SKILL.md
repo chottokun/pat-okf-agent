@@ -27,6 +27,7 @@ Use this skill when gathering or validating external sources (DOI, arXiv, datash
 2. **JaLC / DataCite DOI**: Japanese journals (J-STAGE) and technical repositories. Fallback from Crossref 404 via `doi.org/ra` to JaLC REST API or `doi.org` CSL-JSON content negotiation.
 3. **arXiv ID**: Preprints checked against arXiv Atom API. Version of Record DOI is recorded if present.
 4. **Identifier-less Web URLs (Tier 4 / Datasheets)**: Official manufacturer datasheets, product pages, or university bulletins without DOI. Captured with HTML/PDF snapshot, SHA-256 sidecar, and publisher extraction. Recorded as `kind=web` (or `datasheet`, `product-page`).
+5. **User-Supplied Local Materials (`--file`)**: Offline intake for local PDFs, HTML, plain text, or Markdown materials passed by the user. Computes SHA-256, stores a snapshot at `<evidence>/snapshots/local_<sha256[:16]>.<ext>` (`.md` inputs are stored as `.txt` so `okf validate` never parses them as concept notes), and outputs `local-file:<filename> retrieved=YYYY-MM-DD via=local-file snapshot=local_<sha256[:16]>` (plus `issued=YYYY-MM-DD` if `--issued` is passed). Guarantees byte-level integrity of the received file, not upstream authenticity. Identical bytes supplied under a different filename reuse the same snapshot key, and `.meta.json`'s `original_filename` retains the first ingested filename.
 
 ## Discovery & Pre-Filtering Discipline
 
@@ -56,6 +57,12 @@ uv run okf verify-source arXiv:2401.12345 --expect-author "Smith" --json
 # Verify Web datasheet or Tier-4 bulletin and save snapshot
 uv run okf verify-source "datasheet:https://example.com/aln-datasheet.pdf" \
   --issued 2024-05-01 \
+  --json
+
+# Verify and snapshot a local user-supplied material offline
+uv run okf verify-source --file ./materials/aln-report.pdf \
+  --cache-dir <wiki>/evidence \
+  --check-claim "180 W/m" \
   --json
 # For a KB that keeps evidence internally (ops-record / paper-centric KBs),
 # direct snapshots into the KB's own evidence dir:

@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import heapq
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from .frontmatter import FrontmatterError
 from .model import (
@@ -16,7 +18,7 @@ from .model import (
     tokenize,
 )
 
-__all__ = ["Edge", "TraversalHit", "WikiGraph", "build_graph"]
+__all__ = ["Edge", "ReachabilityReport", "TraversalHit", "WikiGraph", "build_graph"]
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,42 @@ class TraversalHit:
     def as_dict(self) -> dict:
         return {"node": self.node, "score": round(self.score, 6),
                 "depth": self.depth, "path": list(self.path)}
+
+
+@dataclass(frozen=True)
+class ReachabilityReport:
+    """Objective link reachability diagnostics over a WikiGraph."""
+
+    node_count: int
+    edge_count: int
+    broken_link_count: int
+    isolated_count: int
+    zero_inbound_count: int
+    zero_outbound_count: int
+    component_count: int
+    isolated: list[dict[str, Any]]
+    zero_inbound: list[dict[str, Any]]
+    zero_outbound: list[dict[str, Any]]
+    components: list[dict[str, Any]]
+    seed_reachability: dict[str, Any] | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "node_count": self.node_count,
+            "edge_count": self.edge_count,
+            "broken_link_count": self.broken_link_count,
+            "isolated_count": self.isolated_count,
+            "zero_inbound_count": self.zero_inbound_count,
+            "zero_outbound_count": self.zero_outbound_count,
+            "component_count": self.component_count,
+            "isolated": list(self.isolated),
+            "zero_inbound": list(self.zero_inbound),
+            "zero_outbound": list(self.zero_outbound),
+            "components": list(self.components),
+        }
+        if self.seed_reachability is not None:
+            data["seed_reachability"] = dict(self.seed_reachability)
+        return data
 
 
 class WikiGraph:
@@ -267,6 +305,160 @@ class WikiGraph:
         hits = sorted(best.values(),
                       key=lambda hit: (-hit.score, hit.depth, hit.path))
         return hits[:max_nodes]
+
+    def diagnose_reachability(
+        self,
+        *,
+        seeds: list[str] | None = None,
+        direction: str = "out",
+        exclude_nodes: set[str] | None = None,
+    ) -> ReachabilityReport:
+        """Compute objective link reachability, zero-in/out degrees, and components."""
+        if direction not in ("out", "in", "both"):
+            raise ValueError("direction must be 'out', 'in' or 'both'")
+
+        resolved_seeds: list[str] = []
+        if seeds:
+            for seed in seeds:
+                rel = seed if seed in self.nodes else self.resolve_seed(seed)
+                if rel not in resolved_seeds:
+                    resolved_seeds.append(rel)
+
+        effective_exclude = set(exclude_nodes or ()) - set(resolved_seeds)
+        active = sorted(rel for rel in self.nodes if rel not in effective_exclude)
+        active_set = set(active)
+
+        out_map = {
+            rel: [t for t in self.edges.get(rel, []) if t in active_set]
+            for rel in active
+        }
+        in_map = {
+            rel: [s for s in self.backlinks.get(rel, []) if s in active_set]
+            for rel in active
+        }
+
+        node_types: dict[str, str] = {}
+        isolated: list[dict[str, Any]] = []
+        zero_inbound: list[dict[str, Any]] = []
+        zero_outbound: list[dict[str, Any]] = []
+
+        for rel in active:
+            concept = self.nodes[rel]
+            raw_type = concept.meta.get("type")
+            doc_type = (
+                str(raw_type).strip().casefold()
+                if isinstance(raw_type, str) and raw_type.strip()
+                else "concept"
+            )
+            node_types[rel] = doc_type
+            in_c = len(in_map[rel])
+            out_c = len(out_map[rel])
+            if in_c == 0 and out_c == 0:
+                isolated.append({
+                    "rel": rel,
+                    "title": concept.title,
+                    "type": doc_type,
+                })
+            if in_c == 0:
+                zero_inbound.append({
+                    "rel": rel,
+                    "title": concept.title,
+                    "type": doc_type,
+                    "outbound_count": out_c,
+                    "is_isolated": out_c == 0,
+                })
+            if out_c == 0:
+                zero_outbound.append({
+                    "rel": rel,
+                    "title": concept.title,
+                    "type": doc_type,
+                    "inbound_count": in_c,
+                    "is_isolated": in_c == 0,
+                })
+
+        visited_comp: set[str] = set()
+        components_raw: list[list[str]] = []
+        for start in active:
+            if start in visited_comp:
+                continue
+            comp: list[str] = []
+            q: deque[str] = deque([start])
+            visited_comp.add(start)
+            while q:
+                u = q.popleft()
+                comp.append(u)
+                for v in sorted(set(out_map[u]) | set(in_map[u])):
+                    if v not in visited_comp:
+                        visited_comp.add(v)
+                        q.append(v)
+            comp.sort()
+            components_raw.append(comp)
+        components_raw.sort(key=lambda c: (-len(c), c[0]))
+        components = [{"size": len(c), "nodes": c} for c in components_raw]
+
+        seed_reachability: dict[str, Any] | None = None
+        if resolved_seeds:
+            dist: dict[str, int] = {}
+            bfs: deque[str] = deque()
+            for s in resolved_seeds:
+                if s not in dist:
+                    dist[s] = 0
+                    bfs.append(s)
+            while bfs:
+                curr = bfs.popleft()
+                d = dist[curr]
+                if direction == "out":
+                    nbrs = out_map[curr]
+                elif direction == "in":
+                    nbrs = in_map[curr]
+                else:
+                    nbrs = sorted(set(out_map[curr]) | set(in_map[curr]))
+                for nxt in nbrs:
+                    if nxt not in dist:
+                        dist[nxt] = d + 1
+                        bfs.append(nxt)
+
+            reachable = [
+                {"rel": rel, "depth": dist[rel]}
+                for rel in sorted(dist, key=lambda r: (dist[r], r))
+            ]
+            unreachable = [
+                {
+                    "rel": rel,
+                    "title": self.nodes[rel].title,
+                    "type": node_types[rel],
+                    "inbound_count": len(in_map[rel]),
+                    "outbound_count": len(out_map[rel]),
+                }
+                for rel in active
+                if rel not in dist
+            ]
+            seed_reachability = {
+                "seeds": resolved_seeds,
+                "direction": direction,
+                "reachable_count": len(reachable),
+                "unreachable_count": len(unreachable),
+                "reachable": reachable,
+                "unreachable": unreachable,
+            }
+
+        edge_count = sum(len(targets) for targets in out_map.values())
+        broken_link_count = sum(1 for src, _ in self.broken if src in active_set)
+
+        return ReachabilityReport(
+            node_count=len(active),
+            edge_count=edge_count,
+            broken_link_count=broken_link_count,
+            isolated_count=len(isolated),
+            zero_inbound_count=len(zero_inbound),
+            zero_outbound_count=len(zero_outbound),
+            component_count=len(components),
+            isolated=isolated,
+            zero_inbound=zero_inbound,
+            zero_outbound=zero_outbound,
+            components=components,
+            seed_reachability=seed_reachability,
+        )
 
 
 def build_graph(root: str | Path) -> WikiGraph:
